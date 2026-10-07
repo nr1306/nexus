@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/CaptureFailed.v1.schema.json",
+  "title": "CaptureFailed payload (event, topic payment.events)",
+  "description": "Nothing was charged.",
+  "type": "object",
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "enum": [
+        "NOT_AUTHORIZED",
+        "AUTHORIZATION_VOIDED",
+        "CAPTURE_DECLINED"
+      ]
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/PaymentDeclined.v1.schema.json",
+  "title": "PaymentDeclined payload (event, topic payment.events)",
+  "description": "No funds are held.",
+  "type": "object",
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "enum": [
+        "CARD_DECLINED",
+        "INSUFFICIENT_FUNDS",
+        "INVALID_REQUEST",
+        "ORDER_CANCELLED"
+      ]
+    }
+  }
+}

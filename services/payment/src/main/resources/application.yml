@@ -21,6 +21,18 @@ spring:
       properties:
         enable.idempotence: true
 
+nexus:
+  payment:
+    gateway: ${PAYMENT_GATEWAY:mock}
+    mock-latency: PT0S
+    topic-partitions: 12
+    topic-replicas: 1
+
+logging:
+  structured:
+    format:
+      console: ecs
+
 management:
   endpoints:
     web:

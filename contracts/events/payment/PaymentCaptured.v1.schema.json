@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/PaymentCaptured.v1.schema.json",
+  "title": "PaymentCaptured payload (event, topic payment.events)",
+  "description": "The authorized amount has been charged.",
+  "type": "object",
+  "required": [
+    "amountCents",
+    "currency"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "amountCents": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Amount in minor units (cents)."
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "description": "ISO 4217 code."
+    }
+  }
+}

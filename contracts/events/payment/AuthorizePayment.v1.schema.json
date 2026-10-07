@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/AuthorizePayment.v1.schema.json",
+  "title": "AuthorizePayment payload (command, topic payment.commands)",
+  "description": "Place a hold for the order total. At most once per order. Replies: PaymentAuthorized or PaymentDeclined.",
+  "type": "object",
+  "required": [
+    "amountCents",
+    "currency",
+    "paymentMethod"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "amountCents": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Amount in minor units (cents)."
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "description": "ISO 4217 code."
+    },
+    "paymentMethod": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider payment method token, e.g. Stripe test 'pm_card_visa'."
+    }
+  }
+}

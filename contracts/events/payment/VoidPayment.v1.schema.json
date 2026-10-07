@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/VoidPayment.v1.schema.json",
+  "title": "VoidPayment payload (compensation command, topic payment.commands)",
+  "description": "Release the authorization hold. Idempotent: voiding twice, or voiding an order with no successful authorization, is a no-op. Replies: PaymentVoided or PaymentVoidFailed.",
+  "type": "object",
+  "required": [],
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Why the saga is compensating, for logs and audit."
+    }
+  }
+}

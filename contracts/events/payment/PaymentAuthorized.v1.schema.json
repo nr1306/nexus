@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/PaymentAuthorized.v1.schema.json",
+  "title": "PaymentAuthorized payload (event, topic payment.events)",
+  "description": "Funds are held.",
+  "type": "object",
+  "required": [
+    "amountCents",
+    "currency",
+    "authorizationId"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "amountCents": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Amount in minor units (cents)."
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$",
+      "description": "ISO 4217 code."
+    },
+    "authorizationId": {
+      "type": "string"
+    }
+  }
+}

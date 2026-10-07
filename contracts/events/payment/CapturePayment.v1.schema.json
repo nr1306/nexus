@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/CapturePayment.v1.schema.json",
+  "title": "CapturePayment payload (command, topic payment.commands)",
+  "description": "Capture the full authorized amount. At most once per order. Replies: PaymentCaptured or CaptureFailed.",
+  "type": "object",
+  "required": [],
+  "additionalProperties": false,
+  "properties": {}
+}
