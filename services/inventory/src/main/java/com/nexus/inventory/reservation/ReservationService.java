@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexus.inventory.config.InventoryProperties;
 import com.nexus.inventory.messaging.InventoryTopics;
+import com.nexus.inventory.reservation.InventoryMessages.InventoryCommitted;
 import com.nexus.inventory.reservation.InventoryMessages.InventoryRejected;
 import com.nexus.inventory.reservation.InventoryMessages.InventoryReleased;
 import com.nexus.inventory.reservation.InventoryMessages.InventoryReserved;
@@ -103,15 +104,28 @@ public class ReservationService {
         log.info("Released {} SKU(s)", released.size());
     }
 
+    /**
+     * The order completed: held stock is sold. Committing twice, or with no hold, is a no-op that
+     * still replies. Committed holds are never released or expired.
+     */
+    public void commit(EventEnvelope command) {
+        List<LineItem> committed = LineItem.sortBySku(reservations.commitHeld(command.orderId(), clock.instant()));
+        for (LineItem item : committed) {
+            stock.commit(item.sku(), item.quantity());
+        }
+        reply(command, InventoryMessages.INVENTORY_COMMITTED, new InventoryCommitted(committed));
+        log.info("Committed {} SKU(s)", committed.size());
+    }
+
     private void replyToRepeatedReserve(EventEnvelope command, List<Reservation> existing) {
-        List<Reservation> held = existing.stream().filter(r -> r.status() == Status.HELD).toList();
+        List<Reservation> held = existing.stream().filter(r -> r.status() != Status.RELEASED).toList();
         if (held.isEmpty()) {
             reject(command, RejectionReason.ALREADY_RELEASED, null);
             return;
         }
         List<LineItem> items = held.stream().map(r -> new LineItem(r.sku(), r.quantity())).toList();
         reply(command, InventoryMessages.INVENTORY_RESERVED, new InventoryReserved(items, held.getFirst().expiresAt()));
-        log.info("Order already holds stock; repeated InventoryReserved");
+        log.info("Order already holds or committed stock; repeated InventoryReserved");
     }
 
     private void undo(List<LineItem> taken) {

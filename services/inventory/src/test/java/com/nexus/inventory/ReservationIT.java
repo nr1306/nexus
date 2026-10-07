@@ -183,6 +183,44 @@ class ReservationIT extends InventoryIntegrationTest {
     }
 
     @Test
+    void commitSettlesHeldStockAndIsIdempotent() {
+        String sku = newSku(10);
+        UUID orderId = UUID.randomUUID();
+        handler.handle(reserveCommand(orderId, Map.of(sku, 4)));
+        EventEnvelope commit = commitCommand(orderId);
+
+        assertThat(handler.handle(commit)).isTrue();
+        assertThat(handler.handle(commit)).isFalse();
+        handler.handle(commitCommand(orderId));
+
+        assertThat(available(sku)).isEqualTo(6);
+        assertThat(reserved(sku)).isZero();
+        List<EventEnvelope> replies = replies(orderId);
+        assertThat(replies).extracting(EventEnvelope::eventType)
+                .containsExactly("InventoryReserved", "InventoryCommitted", "InventoryCommitted");
+        assertThat(replies.get(1).payload().get("items")).hasSize(1);
+        assertThat(replies.get(2).payload().get("items")).isEmpty();
+    }
+
+    @Test
+    void committedStockIsNeverReleased() {
+        String sku = newSku(10);
+        UUID orderId = UUID.randomUUID();
+        handler.handle(reserveCommand(orderId, Map.of(sku, 4)));
+        handler.handle(commitCommand(orderId));
+
+        handler.handle(releaseCommand(orderId));
+        handler.handle(reserveCommand(orderId, Map.of(sku, 4)));
+
+        assertThat(available(sku)).isEqualTo(6);
+        assertThat(reserved(sku)).isZero();
+        List<EventEnvelope> replies = replies(orderId);
+        assertThat(replies.get(2).eventType()).isEqualTo("InventoryReleased");
+        assertThat(replies.get(2).payload().get("items")).isEmpty();
+        assertThat(replies.get(3).eventType()).isEqualTo("InventoryReserved");
+    }
+
+    @Test
     void concurrentReservationsNeverOversell() throws Exception {
         int stock = 10;
         int orders = 50;

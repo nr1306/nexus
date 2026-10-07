@@ -10,9 +10,11 @@ public final class InventoryMessages {
 
     public static final String RESERVE_INVENTORY = "ReserveInventory";
     public static final String RELEASE_INVENTORY = "ReleaseInventory";
+    public static final String COMMIT_INVENTORY = "CommitInventory";
     public static final String INVENTORY_RESERVED = "InventoryReserved";
     public static final String INVENTORY_REJECTED = "InventoryRejected";
     public static final String INVENTORY_RELEASED = "InventoryReleased";
+    public static final String INVENTORY_COMMITTED = "InventoryCommitted";
 
     private InventoryMessages() {
     }
@@ -30,6 +32,9 @@ public final class InventoryMessages {
     }
 
     public record InventoryReleased(List<LineItem> items) {
+    }
+
+    public record InventoryCommitted(List<LineItem> items) {
     }
 
     public enum RejectionReason {

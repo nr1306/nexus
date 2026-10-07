@@ -13,13 +13,33 @@ spring:
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
-      group-id: order-svc
+      group-id: order-saga
       enable-auto-commit: false
       auto-offset-reset: earliest
     producer:
       acks: all
       properties:
         enable.idempotence: true
+  mvc:
+    problemdetails:
+      enabled: true
+
+nexus:
+  order:
+    step-timeout: PT30S
+    max-step-attempts: 2
+    max-compensation-attempts: 5
+    sweep-batch-size: 100
+    timeout-sweeper:
+      enabled: true
+      interval: PT1S
+    topic-partitions: 12
+    topic-replicas: 1
+
+logging:
+  structured:
+    format:
+      console: ecs
 
 management:
   endpoints:

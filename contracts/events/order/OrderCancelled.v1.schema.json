@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/order/OrderCancelled.v1.schema.json",
+  "title": "OrderCancelled payload (event, topic order.events)",
+  "description": "The saga failed and every completed step was undone.",
+  "type": "object",
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Why the saga failed, e.g. OUT_OF_STOCK, CARD_DECLINED, CAPTURE_DECLINED, TIMEOUT_RESERVE_INVENTORY."
+    }
+  }
+}

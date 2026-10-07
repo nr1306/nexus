@@ -1,15 +1,21 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nexus.local/contracts/events/inventory/InventoryReserved.v1.schema.json",
-  "title": "InventoryReserved payload (event, topic inventory.events)",
-  "description": "All items are held for the order until committed (order completed), released (compensation) or expired.",
+  "$id": "https://nexus.local/contracts/events/order/OrderCreated.v1.schema.json",
+  "title": "OrderCreated payload (event, topic order.events)",
+  "description": "An order was accepted and its saga started.",
   "type": "object",
   "required": [
+    "customerId",
     "items",
-    "expiresAt"
+    "totalCents",
+    "currency"
   ],
   "additionalProperties": false,
   "properties": {
+    "customerId": {
+      "type": "string",
+      "minLength": 1
+    },
     "items": {
       "type": "array",
       "minItems": 1,
@@ -17,7 +23,8 @@
         "type": "object",
         "required": [
           "sku",
-          "quantity"
+          "quantity",
+          "unitPriceCents"
         ],
         "additionalProperties": false,
         "properties": {
@@ -28,14 +35,21 @@
           "quantity": {
             "type": "integer",
             "minimum": 1
+          },
+          "unitPriceCents": {
+            "type": "integer",
+            "minimum": 1
           }
         }
       }
     },
-    "expiresAt": {
+    "totalCents": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "currency": {
       "type": "string",
-      "format": "date-time",
-      "description": "UTC; after this time the hold is eligible for release by the expiry sweeper (SPEC.md §7, not yet built)."
+      "pattern": "^[A-Z]{3}$"
     }
   }
 }

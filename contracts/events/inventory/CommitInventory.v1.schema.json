@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/inventory/CommitInventory.v1.schema.json",
+  "title": "CommitInventory payload (command, topic inventory.commands)",
+  "description": "The order completed: held stock leaves the system (reserved decreases, available unchanged). Idempotent: committing twice, or with no hold, is a no-op. Reply: InventoryCommitted.",
+  "type": "object",
+  "required": [],
+  "additionalProperties": false,
+  "properties": {}
+}

@@ -37,6 +37,18 @@ public class StockRepository {
         }
     }
 
+    /** Removes {@code quantity} from reserved: the stock has been sold. */
+    public void commit(String sku, int quantity) {
+        int updated = jdbcTemplate.update("""
+                UPDATE stock
+                   SET reserved = reserved - ?, updated_at = now()
+                 WHERE sku = ?
+                """, quantity, sku);
+        if (updated != 1) {
+            throw new IllegalStateException("Cannot commit unknown SKU " + sku);
+        }
+    }
+
     public boolean exists(String sku) {
         return Boolean.TRUE.equals(jdbcTemplate.queryForObject(
                 "SELECT EXISTS (SELECT 1 FROM stock WHERE sku = ?)", Boolean.class, sku));

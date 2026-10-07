@@ -45,6 +45,7 @@ public class InventoryCommandHandler {
         switch (command.eventType()) {
             case InventoryMessages.RESERVE_INVENTORY -> reservationService.reserve(command);
             case InventoryMessages.RELEASE_INVENTORY -> reservationService.release(command);
+            case InventoryMessages.COMMIT_INVENTORY -> reservationService.commit(command);
             default -> log.warn("Ignoring unknown command type");
         }
     }

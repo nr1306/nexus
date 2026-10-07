@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/order/OrderCompleted.v1.schema.json",
+  "title": "OrderCompleted payload (event, topic order.events)",
+  "description": "Every saga step succeeded: stock committed, payment captured.",
+  "type": "object",
+  "required": [
+    "totalCents",
+    "currency"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "totalCents": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    }
+  }
+}

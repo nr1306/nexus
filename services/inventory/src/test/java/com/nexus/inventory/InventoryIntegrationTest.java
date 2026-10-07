@@ -85,6 +85,11 @@ public abstract class InventoryIntegrationTest {
         return new EventEnvelope(UUID.randomUUID(), "ReserveInventory", 1, orderId, UUID.randomUUID(), Instant.now(), payload);
     }
 
+    protected EventEnvelope commitCommand(UUID orderId) {
+        return new EventEnvelope(UUID.randomUUID(), "CommitInventory", 1, orderId, UUID.randomUUID(), Instant.now(),
+                objectMapper.createObjectNode());
+    }
+
     protected EventEnvelope releaseCommand(UUID orderId) {
         var payload = objectMapper.createObjectNode().put("reason", "PAYMENT_DECLINED");
         return new EventEnvelope(UUID.randomUUID(), "ReleaseInventory", 1, orderId, UUID.randomUUID(), Instant.now(), payload);

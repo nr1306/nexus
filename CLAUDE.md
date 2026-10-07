@@ -41,6 +41,8 @@ Failure → `COMPENSATING` (undo finished steps in reverse) → `CANCELLED`, or 
 | Fraud reject / capture fail | VoidPayment, ReleaseInventory |
 | Fulfillment | RefundPayment, ReleaseInventory |
 
+The table covers business failures. On a **timeout** the saga also undoes the in-flight step (it may have succeeded unheard), e.g. a reserve timeout sends `ReleaseInventory`. See ADR 0003.
+
 > **Open decision:** fraud check currently runs *after* payment authorization. Moving it before authorization is under consideration — see `SPEC.md` §14. Don't change the order without an ADR.
 
 ## Tech stack
@@ -67,7 +69,7 @@ deploy/connect/       Debezium, OpenSearch sink, S3 sink connector configs
 infra/terraform/      vpc, eks, msk, rds, redis, opensearch, ecr, s3, iam, budget
 bench/                gatling/, chaos/, scenarios/, results/
 SPEC.md               Full project spec
-docs/adr/             Architecture decision records (0001 outbox, 0002 payment idempotency)
+docs/adr/             Architecture decision records (0001 outbox, 0002 payment idempotency, 0003 saga)
 Makefile
 ```
 
@@ -93,11 +95,13 @@ If a command does not exist yet, add it to the Makefile rather than documenting 
 - Gradle wrapper 8.14.5 runs on the default JDK 17; the build uses a **Java 21 toolchain** that Gradle downloads automatically (foojay). Don't point `JAVA_HOME` at Homebrew's JDK 27 (Gradle 8.14 can't run on it).
 - Spring Boot **3.5.x**; versions live in `gradle/libs.versions.toml`.
 - Mock payment methods (`MockPaymentGateway`): `pm_card_visa` approves, `pm_card_chargeDeclined` / `pm_card_chargeDeclinedInsufficientFunds` decline, `pm_mock_captureFails` authorizes but fails capture.
+- Place an order locally (after `make up`, starting the services, `make connectors`):
+  `curl -X POST localhost:8101/orders -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' -d '{"customerId":"c1","currency":"USD","paymentMethod":"pm_card_visa","items":[{"sku":"SKU-0001","quantity":2,"unitPriceCents":1999}]}'`, then `GET localhost:8101/orders/<id>`. The REST API is on Order directly until the Go gateway (Phase 3) fronts it via gRPC; both call `OrderService`.
 - Ports: order **8101**, inventory **8102**, payment **8103**; Kafka 9092, Postgres 5432 (`order_db`, `inventory_db`, `payment_db`), Redis 6379, Kafka Connect 8083.
 - Container images used by tests must match `deploy/compose/docker-compose.yml` (`postgres:16`, `apache/kafka:4.1.2`, `quay.io/debezium/connect:3.7.0.Final`).
 - Testcontainers is the Boot-managed 1.21.x. Don't add `debezium-testing-testcontainers` (it needs Testcontainers 2.x); run the Connect image as a `GenericContainer` instead.
 - Integration tests: depend on `testImplementation(testFixtures(project(":libs:messaging")))` and use `NexusContainers` + `OutboxConnectors`. Follow `InventoryIntegrationTest`: one singleton Postgres/Kafka/Connect stack per test JVM, connector registered once, tests isolated by fresh SKUs/order ids instead of truncating.
-- Structured logging: services use `logging.structured.format.console: ecs` and put `orderId`, `sagaId`, `eventId`, `eventType` in the MDC around message handling (see `InventoryCommandHandler`). Inventory and Payment have this; add it to Order when it's built.
+- Structured logging: services use `logging.structured.format.console: ecs` and put `orderId`, `sagaId`, `eventId`, `eventType` in the MDC around message handling (see `InventoryCommandHandler`). All three services have this.
 - To stop a service you started, kill it by PID or by its port (`lsof -ti tcp:8101 | xargs kill`). **Never** use broad `pkill -f` patterns: on macOS they match every app under `/Applications`.
 
 ## Non-negotiable rules (correctness)
@@ -189,7 +193,9 @@ Benchmark numbers will appear on a résumé. Treat them as evidence.
 - **Phase 2, retry topics break per-order ordering.** If a `ReleaseInventory` is processed before a retried `ReserveInventory` for the same order, release finds no hold and the late reserve then succeeds, leaving a hold nothing will release. Fix with a per-order release marker that makes later reserves reject as `ALREADY_RELEASED`.
 - **Payment provider calls hold a DB connection** for the call's duration (ADR 0002). Fine for the mock; measure with Stripe latency in S1.
 - **No retry/DLQ yet:** a handler exception (e.g. a provider void failure) is retried a few times by Spring Kafka's default error handler, then the record is skipped. Phase 2 retry topics + DLQ close this.
-- **Order saga:** a late `InventoryReserved` for a saga that has already ended (cancelled/timed out) must trigger a `ReleaseInventory`.
+- **Capture has no undo until Phase 2 refund:** a capture timeout where the capture actually happened ends in `NEEDS_ATTENTION` (the void fails with `ALREADY_CAPTURED`).
+- **Phase 2 saga states:** adding `FRAUD_APPROVED`, `PAYMENT_CAPTURED`, `FULFILLING` needs a **new** migration for the `saga_instances.state` CHECK; never edit V10.
+- **Idempotency-Key is global**, not scoped per customer/API key. Scope it when the gateway (Phase 3) passes the caller identity.
 
 ## Build phases (current status: Phase 1 in progress)
 
@@ -206,10 +212,11 @@ Update the status line above when a phase's done criteria are met (see `SPEC.md`
 - [x] Outbox + Debezium connector, idempotent consumer base (`libs/messaging`, ADR 0001)
 - [x] Inventory: reserve (all-or-nothing) / release, oversell prevention, duplicate + concurrency tests
 - [ ] Inventory: reservation expiry sweeper (SPEC §7), Redis stock read cache
-- [ ] **Open question:** what ends a hold when an order *completes*? Today a COMPLETED order keeps its stock in `reserved` forever, and the expiry sweeper / reconciliation invariant 3 would then wrongly release it. Decide (e.g. Inventory consumes `OrderCompleted` and marks holds `COMMITTED`) before building the sweeper or the Order saga.
+- [x] Completed orders settle their hold: Order sends `CommitInventory`; Inventory marks holds `COMMITTED` (never released or expired)
 - [x] Payment: authorize / capture / void with stateless mock adapter, at most once per `(order_id, operation)` (ADR 0002)
-- [ ] Order: API + Idempotency-Key, saga steps 1, 2, 4, compensations, deadlines
-- [ ] Testcontainers saga tests: happy path, out-of-stock, card decline, duplicate event
+- [x] Order: REST API + Idempotency-Key, saga reserve → authorize → capture → complete, compensations, deadlines (ADR 0003)
+- [x] Saga tests per service (replies simulated): happy path, out-of-stock, card decline, capture failure, duplicates, timeouts
+- [ ] Cross-service end-to-end test (all three services + Debezium) and the 1,000-order done check
 - [ ] Done check: 1,000 scripted mixed-failure orders → 0 stock drift, 0 double charges
 
 ## When unsure

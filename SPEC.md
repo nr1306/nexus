@@ -109,8 +109,9 @@ stateDiagram-v2
 | 3 Fraud check | Evaluate (gRPC, circuit breaker) | APPROVE | REJECT, or breaker open past deadline | VoidPayment, ReleaseInventory |
 | 4 Capture payment | CapturePayment (Kafka) | PaymentCaptured | CaptureFailed | VoidPayment, ReleaseInventory |
 | 5 Fulfill | CreateShipment (Kafka) | ShipmentCreated | FulfillmentFailed | RefundPayment, ReleaseInventory |
-| 6 Complete | — | OrderCompleted event | — | — |
+| 6 Complete | CommitInventory (Kafka, no reply awaited) | OrderCompleted event | — | — |
 
+- Phase 1 runs steps 1, 2, 4 and 6; Phase 2 adds 3 and 5. Design and timeout rules: ADR 0003.
 - Every step has a deadline (default 30 s). A scheduler scans `saga_instances` for overdue steps, retries the command once, then compensates.
 - Compensations are idempotent commands with retries; releasing or refunding twice is a no-op.
 - Notifications are not saga steps: Fulfillment consumes `order.events` and sends confirmation, cancellation and shipping messages asynchronously.
@@ -239,7 +240,7 @@ One order = one trace, from the gateway REST call through every Kafka hop to `Or
 
 **Custom metrics:**
 
-- `saga_completed_total`, `saga_compensated_total{reason}`, `saga_needs_attention_total`
+- `saga_completed_total`, `saga_compensating_total{reason}`, `saga_compensated_total{reason}`, `saga_cancelled_total{reason}`, `saga_needs_attention_total{reason}`
 - `saga_duration_seconds` histogram (source of end-to-end p50/p95/p99)
 - `duplicate_events_skipped_total{consumer_group}`
 - `dlq_messages_total{topic}`, `reconciliation_findings_total{type}`

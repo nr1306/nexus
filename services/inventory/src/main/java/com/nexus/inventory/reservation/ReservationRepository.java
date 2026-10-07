@@ -11,7 +11,7 @@ import java.util.UUID;
 @Repository
 public class ReservationRepository {
 
-    public enum Status { HELD, RELEASED }
+    public enum Status { HELD, RELEASED, COMMITTED }
 
     public record Reservation(String sku, int quantity, Status status, Instant expiresAt) {
     }
@@ -63,5 +63,17 @@ public class ReservationRepository {
                         """,
                 (rs, i) -> new LineItem(rs.getString("sku"), rs.getInt("quantity")),
                 Timestamp.from(releasedAt), orderId);
+    }
+
+    /** Marks the order's HELD reservations COMMITTED and returns them. */
+    public List<LineItem> commitHeld(UUID orderId, Instant committedAt) {
+        return jdbcTemplate.query("""
+                        UPDATE reservations
+                           SET status = 'COMMITTED', committed_at = ?
+                         WHERE order_id = ? AND status = 'HELD'
+                        RETURNING sku, quantity
+                        """,
+                (rs, i) -> new LineItem(rs.getString("sku"), rs.getInt("quantity")),
+                Timestamp.from(committedAt), orderId);
     }
 }
