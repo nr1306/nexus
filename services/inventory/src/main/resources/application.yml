@@ -21,6 +21,17 @@ spring:
       properties:
         enable.idempotence: true
 
+nexus:
+  inventory:
+    reservation-ttl: PT10M
+    topic-partitions: 12
+    topic-replicas: 1
+
+logging:
+  structured:
+    format:
+      console: ecs
+
 management:
   endpoints:
     web:

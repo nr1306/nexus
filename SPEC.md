@@ -163,13 +163,13 @@ Each service writes its state change **and** its outgoing event in the same Post
 | Service | Core tables | Constraint that protects correctness |
 |---|---|---|
 | Order | orders, order_items, saga_instances, outbox, idempotency_keys | `idempotency_keys.key` unique: a retried POST returns the original order |
-| Inventory | stock (sku, available, reserved, version), reservations, outbox | Conditional update `available = available - :qty WHERE sku = :sku AND available >= :qty`; 0 rows = rejected, never negative |
+| Inventory | stock (sku, available, reserved), reservations, outbox | Conditional update `available = available - :qty WHERE sku = :sku AND available >= :qty`; 0 rows = rejected, never negative |
 | Payment | payments, payment_attempts, outbox | Unique `(order_id, operation)`: one authorize / capture / refund per order |
 | Fulfillment | shipments, notifications, outbox | Unique `(order_id)` on shipments; unique `(order_id, type)` on notifications |
 | Reconciliation | order_projection, findings, repairs | Unique `(order_id, finding_type)` so a mismatch is reported once |
 | All consumers | processed_events (consumer_group, event_id) | Primary key, inserted in the same transaction as the side effect → duplicates skipped |
 
-**Outbox table (every service):** `id uuid, aggregate_type, aggregate_id, event_type, payload jsonb, created_at`. Debezium's Outbox Event Router routes rows to `<aggregate_type>.events` / `.commands`, keyed by `aggregate_id`. Rows older than 24 h are deleted by a cron job.
+**Outbox table (every service):** `id uuid` (= envelope `eventId`), `aggregate_type`, `aggregate_id` (= `orderId`), `event_type`, `topic`, `payload jsonb` (full envelope), `traceparent` (nullable), `created_at`. Debezium's Outbox Event Router routes each row to its `topic` column (e.g. `inventory.commands`, `order.events`), keyed by `aggregate_id`, with `id`, `eventType` and `traceparent` as headers. The table ships in `libs/messaging` (Flyway V1; V1–V9 reserved for the library, services start at V10). Rows older than 24 h are deleted by a cron job. See ADR 0001.
 
 **Redis read cache:** stock availability for product reads (cache-aside, 5 s TTL, evicted on every reservation). Writes always go to Postgres, so the cache can never cause overselling.
 

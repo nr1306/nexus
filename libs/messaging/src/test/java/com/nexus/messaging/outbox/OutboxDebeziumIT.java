@@ -3,6 +3,8 @@ package com.nexus.messaging.outbox;
 import com.nexus.messaging.envelope.EnvelopeMapper;
 import com.nexus.messaging.envelope.EventEnvelope;
 import com.nexus.messaging.support.TestEnvelopes;
+import com.nexus.messaging.testing.NexusContainers;
+import com.nexus.messaging.testing.OutboxConnectors;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -18,18 +20,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.kafka.KafkaContainer;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,66 +48,25 @@ class OutboxDebeziumIT {
     private static final Network NETWORK = Network.newNetwork();
 
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16")
-            .withNetwork(NETWORK)
-            .withNetworkAliases("postgres")
-            .withDatabaseName("order_db")
-            .withUsername("nexus")
-            .withPassword("nexus")
-            .withCommand("postgres", "-c", "wal_level=logical");
+    private static final PostgreSQLContainer<?> POSTGRES = NexusContainers.postgres(NETWORK, "order_db");
 
     @Container
-    private static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.1.2")
-            .withNetwork(NETWORK)
-            .withListener("kafka:19092");
+    private static final KafkaContainer KAFKA = NexusContainers.kafka(NETWORK);
 
     @Container
-    private static final GenericContainer<?> CONNECT = new GenericContainer<>("quay.io/debezium/connect:3.7.0.Final")
-            .withNetwork(NETWORK)
-            .withExposedPorts(8083)
-            .withEnv(Map.ofEntries(
-                    Map.entry("BOOTSTRAP_SERVERS", "kafka:19092"),
-                    Map.entry("GROUP_ID", "nexus-connect-it"),
-                    Map.entry("CONFIG_STORAGE_TOPIC", "_connect_configs"),
-                    Map.entry("OFFSET_STORAGE_TOPIC", "_connect_offsets"),
-                    Map.entry("STATUS_STORAGE_TOPIC", "_connect_status"),
-                    Map.entry("CONFIG_STORAGE_REPLICATION_FACTOR", "1"),
-                    Map.entry("OFFSET_STORAGE_REPLICATION_FACTOR", "1"),
-                    Map.entry("STATUS_STORAGE_REPLICATION_FACTOR", "1"),
-                    Map.entry("CONNECT_CONFIG_PROVIDERS", "env"),
-                    Map.entry("CONNECT_CONFIG_PROVIDERS_ENV_CLASS",
-                            "org.apache.kafka.common.config.provider.EnvVarConfigProvider"),
-                    Map.entry("POSTGRES_USER", "nexus"),
-                    Map.entry("POSTGRES_PASSWORD", "nexus")))
-            .dependsOn(KAFKA, POSTGRES)
-            .waitingFor(Wait.forHttp("/connectors").forStatusCode(200).withStartupTimeout(Duration.ofMinutes(3)));
+    private static final GenericContainer<?> CONNECT = NexusContainers.connect(NETWORK).dependsOn(KAFKA, POSTGRES);
 
     private static JdbcTemplate jdbc;
     private static TransactionTemplate tx;
     private static final EnvelopeMapper ENVELOPE_MAPPER = new EnvelopeMapper(TestEnvelopes.OBJECT_MAPPER);
 
     @BeforeAll
-    static void migrateAndRegisterConnector() throws Exception {
+    static void migrateAndRegisterConnector() {
         var dataSource = new DriverManagerDataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
         Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
         jdbc = new JdbcTemplate(dataSource);
         tx = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
-
-        String config = Files.readString(Path.of(System.getProperty("nexus.connectorTemplate")))
-                .replace("__SERVICE__", "order");
-        String connectUrl = "http://" + CONNECT.getHost() + ":" + CONNECT.getMappedPort(8083);
-        HttpResponse<String> response = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create(connectUrl + "/connectors/order-outbox/config"))
-                        .header("Content-Type", "application/json")
-                        .PUT(HttpRequest.BodyPublishers.ofString(config))
-                        .build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertThat(response.statusCode()).as(response.body()).isIn(200, 201);
-
-        // Streaming starts once the replication slot is active; rows written after that arrive via the WAL.
-        await().atMost(Duration.ofMinutes(2)).until(() -> jdbc.queryForObject(
-                "SELECT count(*) FROM pg_replication_slots WHERE slot_name = 'order_outbox' AND active",
-                Integer.class) == 1);
+        OutboxConnectors.register(CONNECT, jdbc, "order");
     }
 
     @Test

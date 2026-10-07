@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/inventory/InventoryRejected.v1.schema.json",
+  "title": "InventoryRejected payload (event, topic inventory.events)",
+  "description": "Nothing was reserved for the order.",
+  "type": "object",
+  "required": ["reason"],
+  "additionalProperties": false,
+  "properties": {
+    "reason": { "enum": ["OUT_OF_STOCK", "UNKNOWN_SKU", "INVALID_REQUEST", "ALREADY_RELEASED"] },
+    "sku": { "type": ["string", "null"], "description": "The SKU that caused the rejection, when there is one." }
+  }
+}

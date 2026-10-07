@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.nexus.messaging.testing.NexusContainers;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 /**
@@ -13,7 +14,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
  */
 public abstract class PostgresTestSupport {
 
-    protected static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16");
+    protected static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(NexusContainers.POSTGRES_IMAGE);
 
     protected static final DriverManagerDataSource DATA_SOURCE;
     protected static final JdbcTemplate JDBC;

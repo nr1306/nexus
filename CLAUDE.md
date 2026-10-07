@@ -67,23 +67,37 @@ deploy/connect/       Debezium, OpenSearch sink, S3 sink connector configs
 infra/terraform/      vpc, eks, msk, rds, redis, opensearch, ecr, s3, iam, budget
 bench/                gatling/, chaos/, scenarios/, results/
 SPEC.md               Full project spec
-docs/adr/             Architecture decision records
+docs/adr/             Architecture decision records (0001 transactional outbox)
 Makefile
 ```
 
 ## Commands
 
 ```bash
-make up                         # start local stack (Docker Compose)
-make down                       # stop local stack
-make test                       # all unit + integration tests (Java + Go)
-./gradlew :services:order:test  # one Java service
-cd services/gateway && go test ./...
-make bench SCENARIO=s1          # run a benchmark scenario (s1..s6), writes bench/results/*.json
-make kind-up                    # local Kubernetes via kind + Helm
+make up                         # start local stack (Kafka, Postgres, Redis, Debezium Connect); waits until healthy
+make down                       # stop local stack (keeps data)
+make clean                      # stop local stack and delete the Postgres volume
+make connectors                 # register Debezium outbox connectors (each service must have run its migrations once)
+make build                      # compile everything, skip tests
+make test                       # all unit + integration tests (Java; Go added in Phase 3)
+./gradlew :services:order:test  # one Java module
+./gradlew :services:order:bootRun   # run one service against the local stack
 ```
 
+Planned, not yet implemented: `cd services/gateway && go test ./...`, `make bench SCENARIO=s1` (writes `bench/results/*.json`), `make kind-up`.
+
 If a command does not exist yet, add it to the Makefile rather than documenting a one-off.
+
+### Local environment
+
+- Gradle wrapper 8.14.5 runs on the default JDK 17; the build uses a **Java 21 toolchain** that Gradle downloads automatically (foojay). Don't point `JAVA_HOME` at Homebrew's JDK 27 (Gradle 8.14 can't run on it).
+- Spring Boot **3.5.x**; versions live in `gradle/libs.versions.toml`.
+- Ports: order **8101**, inventory **8102**, payment **8103**; Kafka 9092, Postgres 5432 (`order_db`, `inventory_db`, `payment_db`), Redis 6379, Kafka Connect 8083.
+- Container images used by tests must match `deploy/compose/docker-compose.yml` (`postgres:16`, `apache/kafka:4.1.2`, `quay.io/debezium/connect:3.7.0.Final`).
+- Testcontainers is the Boot-managed 1.21.x. Don't add `debezium-testing-testcontainers` (it needs Testcontainers 2.x); run the Connect image as a `GenericContainer` instead.
+- Integration tests: depend on `testImplementation(testFixtures(project(":libs:messaging")))` and use `NexusContainers` + `OutboxConnectors`. Follow `InventoryIntegrationTest`: one singleton Postgres/Kafka/Connect stack per test JVM, connector registered once, tests isolated by fresh SKUs/order ids instead of truncating.
+- Structured logging: services use `logging.structured.format.console: ecs` and put `orderId`, `sagaId`, `eventId`, `eventType` in the MDC around message handling (see `InventoryCommandHandler`). Only Inventory has this so far; add it to Order and Payment when they're built.
+- To stop a service you started, kill it by PID or by its port (`lsof -ti tcp:8101 | xargs kill`). **Never** use broad `pkill -f` patterns: on macOS they match every app under `/Applications`.
 
 ## Non-negotiable rules (correctness)
 
@@ -107,6 +121,15 @@ These are the point of the project. Never violate them, even to make a test pass
 - Topics: `<service>.commands`, `<service>.events`, `order.events`, plus `<topic>.retry-1s|5s|30s` and `<topic>.dlq`.
 - Any change to a message goes in `contracts/` first. Changes must be backward compatible; otherwise bump `schemaVersion` and handle both.
 - Event types are past tense (`PaymentAuthorized`); commands are imperative (`AuthorizePayment`).
+- The envelope `eventId` **is** the outbox row `id`; Debezium publishes it as the `id` header and consumers dedupe on it.
+- The destination topic is chosen per row by the outbox `topic` column (ADR 0001).
+
+### Messaging API (`libs/messaging`)
+
+- Publish: `OutboxWriter.append(topic, aggregateType, envelope)` inside the `@Transactional` method that changes state. It throws if there's no active transaction.
+- Consume: wrap every side effect in `IdempotentConsumer.handle(consumerGroup, envelope, sideEffect)`. It returns `false` and increments `duplicate_events_skipped_total{consumer_group}` on a duplicate.
+- Parse incoming values with `EnvelopeMapper.fromJson`. `InvalidEnvelopeException` is a permanent error (straight to DLQ).
+- These beans are auto-configured in any service that depends on `libs/messaging`.
 
 ## Coding conventions
 
@@ -115,7 +138,7 @@ These are the point of the project. Never violate them, even to make a test pass
 - Constructor injection only; no field `@Autowired`.
 - Money as `long` cents + ISO currency code; never `double`.
 - All timestamps `Instant` in UTC.
-- Flyway migrations in `src/main/resources/db/migration`; never edit an applied migration.
+- Flyway migrations in `src/main/resources/db/migration`; never edit an applied migration. **V1–V9 are reserved for `libs/messaging`** (outbox, processed_events); each service's own migrations start at **V10**.
 - Micrometer for custom metrics; names as in `SPEC.md` §9 (`saga_completed_total`, `saga_compensated_total{reason}`, `duplicate_events_skipped_total`, …).
 
 **Go (gateway)**
@@ -160,7 +183,12 @@ Benchmark numbers will appear on a résumé. Treat them as evidence.
 - An AWS Budgets alert module must exist before the first apply.
 - CI authenticates to AWS via GitHub OIDC only — never long-lived access keys.
 
-## Build phases (current status: not started)
+## Known risks to handle later
+
+- **Phase 2, retry topics break per-order ordering.** If a `ReleaseInventory` is processed before a retried `ReserveInventory` for the same order, release finds no hold and the late reserve then succeeds, leaving a hold nothing will release. Fix with a per-order release marker that makes later reserves reject as `ALREADY_RELEASED`.
+- **Order saga:** a late `InventoryReserved` for a saga that has already ended (cancelled/timed out) must trigger a `ReleaseInventory`.
+
+## Build phases (current status: Phase 1 in progress)
 
 1. **Core saga, local** — Order, Inventory, Payment, outbox + Debezium, compensations, idempotency, Testcontainers tests.
 2. **Full flow + failure handling** — Fraud (gRPC + circuit breaker), Fulfillment/notifications, retry topics, DLQ + replay API, Stripe adapter.
@@ -169,6 +197,17 @@ Benchmark numbers will appear on a résumé. Treat them as evidence.
 5. **AWS + CI/CD** — Terraform, Helm, KEDA, GitHub Actions, full benchmark runs on EKS.
 
 Update the status line above when a phase's done criteria are met (see `SPEC.md` §12).
+
+**Phase 1 progress:**
+- [x] Monorepo, Gradle, Docker Compose (Kafka, Postgres, Debezium, Redis)
+- [x] Outbox + Debezium connector, idempotent consumer base (`libs/messaging`, ADR 0001)
+- [x] Inventory: reserve (all-or-nothing) / release, oversell prevention, duplicate + concurrency tests
+- [ ] Inventory: reservation expiry sweeper (SPEC §7), Redis stock read cache
+- [ ] **Open question:** what ends a hold when an order *completes*? Today a COMPLETED order keeps its stock in `reserved` forever, and the expiry sweeper / reconciliation invariant 3 would then wrongly release it. Decide (e.g. Inventory consumes `OrderCompleted` and marks holds `COMMITTED`) before building the sweeper or the Order saga.
+- [ ] Payment: authorize / capture / void with mock adapter
+- [ ] Order: API + Idempotency-Key, saga steps 1, 2, 4, compensations, deadlines
+- [ ] Testcontainers saga tests: happy path, out-of-stock, card decline, duplicate event
+- [ ] Done check: 1,000 scripted mixed-failure orders → 0 stock drift, 0 double charges
 
 ## When unsure
 

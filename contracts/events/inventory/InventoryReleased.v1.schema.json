@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/inventory/InventoryReleased.v1.schema.json",
+  "title": "InventoryReleased payload (event, topic inventory.events)",
+  "description": "No stock is held for the order any more. items lists what this release returned; empty if nothing was held.",
+  "type": "object",
+  "required": ["items"],
+  "additionalProperties": false,
+  "properties": {
+    "items": { "type": "array", "items": { "type": "object", "required": ["sku", "quantity"], "additionalProperties": false, "properties": { "sku": { "type": "string", "minLength": 1 }, "quantity": { "type": "integer", "minimum": 1 } } } }
+  }
+}

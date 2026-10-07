@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/inventory/ReleaseInventory.v1.schema.json",
+  "title": "ReleaseInventory payload (compensation command, topic inventory.commands)",
+  "description": "Return all held stock for the order. Idempotent: releasing twice, or releasing an order with no hold, is a no-op. Reply: InventoryReleased.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reason": { "type": "string", "description": "Why the saga is compensating, for logs and audit." }
+  }
+}

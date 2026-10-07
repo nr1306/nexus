@@ -27,6 +27,10 @@ subprojects {
 
         tasks.withType<Test>().configureEach {
             useJUnitPlatform()
+            // Integration tests register the real Debezium connector config used by `make connectors`.
+            val connectorTemplate = rootProject.file("deploy/connect/outbox-connector.json")
+            inputs.file(connectorTemplate)
+            systemProperty("nexus.connectorTemplate", connectorTemplate.absolutePath)
         }
     }
 }
