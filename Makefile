@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f deploy/compose/docker-compose.yml
 
-.PHONY: up down clean ps logs build test
+.PHONY: up down clean ps logs connectors build test
 
 up:            ## start local stack (Kafka, Postgres, Redis, Debezium Connect)
 	$(COMPOSE) up -d --wait
@@ -16,6 +16,9 @@ ps:
 
 logs:
 	$(COMPOSE) logs -f --tail=100
+
+connectors:    ## register Debezium outbox connectors (each service must have run its migrations once)
+	./deploy/connect/register.sh
 
 build:
 	./gradlew build -x test

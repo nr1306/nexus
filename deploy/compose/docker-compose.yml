@@ -78,6 +78,11 @@ services:
       STATUS_STORAGE_REPLICATION_FACTOR: 1
       KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
       VALUE_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      # Lets connector configs reference ${env:POSTGRES_PASSWORD} instead of embedding credentials.
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+      POSTGRES_USER: ${POSTGRES_USER:-nexus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors > /dev/null"]
       interval: 10s

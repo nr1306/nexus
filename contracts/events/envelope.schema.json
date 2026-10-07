@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/envelope.schema.json",
+  "title": "EventEnvelope",
+  "description": "Envelope carried by every Kafka message (commands and events). See SPEC.md §5.",
+  "type": "object",
+  "required": ["eventId", "eventType", "schemaVersion", "orderId", "sagaId", "occurredAt", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "eventId": { "type": "string", "format": "uuid", "description": "Unique per message; equals the outbox row id. Consumers dedupe on it." },
+    "eventType": { "type": "string", "minLength": 1, "description": "Past tense for events (PaymentAuthorized), imperative for commands (AuthorizePayment)." },
+    "schemaVersion": { "type": "integer", "minimum": 1 },
+    "orderId": { "type": "string", "format": "uuid", "description": "Also the Kafka message key." },
+    "sagaId": { "type": "string", "format": "uuid" },
+    "occurredAt": { "type": "string", "format": "date-time", "description": "UTC ISO-8601." },
+    "payload": { "type": "object" }
+  }
+}
