@@ -9,4 +9,5 @@ include(
     "services:order",
     "services:inventory",
     "services:payment",
+    "tests:e2e",
 )

@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f deploy/compose/docker-compose.yml
 
-.PHONY: up down clean ps logs connectors build test
+.PHONY: up down clean ps logs connectors build test e2e phase1-check
 
 up:            ## start local stack (Kafka, Postgres, Redis, Debezium Connect)
 	$(COMPOSE) up -d --wait
@@ -25,3 +25,9 @@ build:
 
 test:          ## all unit + integration tests (Go gateway added in Phase 3)
 	./gradlew test
+
+e2e:           ## end-to-end saga tests: real services as containers + Debezium (slow; needs Docker)
+	./gradlew :tests:e2e:test -Pe2e -Pe2eTests='*SagaE2eIT'
+
+phase1-check:  ## Phase 1 done check: 1,000 mixed orders, 0 stock drift, 0 double charges; writes bench/results/
+	./gradlew :tests:e2e:test -Pe2e -Pe2eTests='*PhaseOneDoneCheckIT' -PdoneCheckOrders=1000 -PresultsDir=$(CURDIR)/bench/results

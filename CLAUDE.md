@@ -82,6 +82,8 @@ make clean                      # stop local stack and delete the Postgres volum
 make connectors                 # register Debezium outbox connectors (each service must have run its migrations once)
 make build                      # compile everything, skip tests
 make test                       # all unit + integration tests (Java; Go added in Phase 3)
+make e2e                        # end-to-end saga tests: every service as a container + Debezium (slow)
+make phase1-check               # 1,000-order done check; writes bench/results/phase1-done-check-*.json
 ./gradlew :services:order:test  # one Java module
 ./gradlew :services:order:bootRun   # run one service against the local stack
 ```
@@ -100,6 +102,7 @@ If a command does not exist yet, add it to the Makefile rather than documenting 
 - Ports: order **8101**, inventory **8102**, payment **8103**; Kafka 9092, Postgres 5432 (`order_db`, `inventory_db`, `payment_db`), Redis 6379, Kafka Connect 8083.
 - Container images used by tests must match `deploy/compose/docker-compose.yml` (`postgres:16`, `apache/kafka:4.1.2`, `quay.io/debezium/connect:3.7.0.Final`).
 - Testcontainers is the Boot-managed 1.21.x. Don't add `debezium-testing-testcontainers` (it needs Testcontainers 2.x); run the Connect image as a `GenericContainer` instead.
+- End-to-end tests live in `tests/e2e` and only run with `-Pe2e` (see Makefile). They run each service's bootJar in an `eclipse-temurin:21-jre` container, because services can't share one JVM (same `application.yml` path and `V10__` migrations). Service logs: `tests/e2e/build/e2e-logs/`.
 - Integration tests: depend on `testImplementation(testFixtures(project(":libs:messaging")))` and use `NexusContainers` + `OutboxConnectors`. Follow `InventoryIntegrationTest`: one singleton Postgres/Kafka/Connect stack per test JVM, connector registered once, tests isolated by fresh SKUs/order ids instead of truncating.
 - Structured logging: services use `logging.structured.format.console: ecs` and put `orderId`, `sagaId`, `eventId`, `eventType` in the MDC around message handling (see `InventoryCommandHandler`). All three services have this.
 - To stop a service you started, kill it by PID or by its port (`lsof -ti tcp:8101 | xargs kill`). **Never** use broad `pkill -f` patterns: on macOS they match every app under `/Applications`.
@@ -197,7 +200,7 @@ Benchmark numbers will appear on a résumé. Treat them as evidence.
 - **Phase 2 saga states:** adding `FRAUD_APPROVED`, `PAYMENT_CAPTURED`, `FULFILLING` needs a **new** migration for the `saga_instances.state` CHECK; never edit V10.
 - **Idempotency-Key is global**, not scoped per customer/API key. Scope it when the gateway (Phase 3) passes the caller identity.
 
-## Build phases (current status: Phase 1 in progress)
+## Build phases (current status: Phase 1 done criteria met; re-run `make phase1-check` on a clean commit for citable evidence. Phase 2 next)
 
 1. **Core saga, local** — Order, Inventory, Payment, outbox + Debezium, compensations, idempotency, Testcontainers tests.
 2. **Full flow + failure handling** — Fraud (gRPC + circuit breaker), Fulfillment/notifications, retry topics, DLQ + replay API, Stripe adapter.
@@ -211,13 +214,14 @@ Update the status line above when a phase's done criteria are met (see `SPEC.md`
 - [x] Monorepo, Gradle, Docker Compose (Kafka, Postgres, Debezium, Redis)
 - [x] Outbox + Debezium connector, idempotent consumer base (`libs/messaging`, ADR 0001)
 - [x] Inventory: reserve (all-or-nothing) / release, oversell prevention, duplicate + concurrency tests
-- [ ] Inventory: reservation expiry sweeper (SPEC §7), Redis stock read cache
 - [x] Completed orders settle their hold: Order sends `CommitInventory`; Inventory marks holds `COMMITTED` (never released or expired)
 - [x] Payment: authorize / capture / void with stateless mock adapter, at most once per `(order_id, operation)` (ADR 0002)
 - [x] Order: REST API + Idempotency-Key, saga reserve → authorize → capture → complete, compensations, deadlines (ADR 0003)
 - [x] Saga tests per service (replies simulated): happy path, out-of-stock, card decline, capture failure, duplicates, timeouts
-- [ ] Cross-service end-to-end test (all three services + Debezium) and the 1,000-order done check
-- [ ] Done check: 1,000 scripted mixed-failure orders → 0 stock drift, 0 double charges
+- [x] Cross-service end-to-end tests (`make e2e`): every service as a container + Debezium, incl. Payment outage + Order restart mid-saga
+- [x] Done check (`make phase1-check`): 1,000 mixed-failure orders → 0 stock drift, 0 double charges (`bench/results/phase1-done-check-*.json`)
+
+**Carried into Phase 2:** reservation expiry sweeper (SPEC §7), Redis stock read cache, refund compensation, `payment_attempts`.
 
 ## When unsure
 

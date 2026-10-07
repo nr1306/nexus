@@ -314,12 +314,12 @@ nexus/
 Each phase ends with something demoable. Phase 1 alone is resume-worthy.
 
 ### Phase 1 — Core saga, local (weeks 1–2)
-- [ ] Monorepo, Gradle, Docker Compose with Kafka, Postgres, Debezium, Redis
-- [ ] Order, Inventory, Payment services with outbox tables and Debezium connectors
-- [ ] Saga state machine for steps 1, 2, 4 with compensations and deadlines
-- [ ] Idempotent consumer base (`processed_events`) and API Idempotency-Key
-- [ ] Testcontainers tests: happy path, out-of-stock, card decline, duplicate event
-- **Done when:** 1,000 scripted orders with mixed failures end with 0 stock drift and 0 double charges
+- [x] Monorepo, Gradle, Docker Compose with Kafka, Postgres, Debezium, Redis
+- [x] Order, Inventory, Payment services with outbox tables and Debezium connectors
+- [x] Saga state machine for steps 1, 2, 4 with compensations and deadlines
+- [x] Idempotent consumer base (`processed_events`) and API Idempotency-Key
+- [x] Testcontainers tests: happy path, out-of-stock, card decline, duplicate event
+- **Done when:** 1,000 scripted orders with mixed failures end with 0 stock drift and 0 double charges (`make phase1-check`)
 
 ### Phase 2 — Full flow + failure handling (weeks 3–4)
 - [ ] Fraud service over gRPC with Resilience4j circuit breaker
