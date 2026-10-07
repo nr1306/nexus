@@ -1,6 +1,6 @@
 # CLAUDE.md — Nexus
 
-Guidance for Claude Code in this repository. Read this fully before making changes. The full design lives in `docs/SPEC.md`; read the relevant section before working on a service.
+Guidance for Claude Code in this repository. Read this fully before making changes. The full design lives in `SPEC.md`; read the relevant section before working on a service.
 
 ## What this project is
 
@@ -41,7 +41,7 @@ Failure → `COMPENSATING` (undo finished steps in reverse) → `CANCELLED`, or 
 | Fraud reject / capture fail | VoidPayment, ReleaseInventory |
 | Fulfillment | RefundPayment, ReleaseInventory |
 
-> **Open decision:** fraud check currently runs *after* payment authorization. Moving it before authorization is under consideration — see `docs/SPEC.md` §14. Don't change the order without an ADR.
+> **Open decision:** fraud check currently runs *after* payment authorization. Moving it before authorization is under consideration — see `SPEC.md` §14. Don't change the order without an ADR.
 
 ## Tech stack
 
@@ -66,7 +66,7 @@ deploy/helm/          One chart per service + umbrella chart
 deploy/connect/       Debezium, OpenSearch sink, S3 sink connector configs
 infra/terraform/      vpc, eks, msk, rds, redis, opensearch, ecr, s3, iam, budget
 bench/                gatling/, chaos/, scenarios/, results/
-docs/SPEC.md          Full project spec
+SPEC.md               Full project spec
 docs/adr/             Architecture decision records
 Makefile
 ```
@@ -116,7 +116,7 @@ These are the point of the project. Never violate them, even to make a test pass
 - Money as `long` cents + ISO currency code; never `double`.
 - All timestamps `Instant` in UTC.
 - Flyway migrations in `src/main/resources/db/migration`; never edit an applied migration.
-- Micrometer for custom metrics; names as in `docs/SPEC.md` §9 (`saga_completed_total`, `saga_compensated_total{reason}`, `duplicate_events_skipped_total`, …).
+- Micrometer for custom metrics; names as in `SPEC.md` §9 (`saga_completed_total`, `saga_compensated_total{reason}`, `duplicate_events_skipped_total`, …).
 
 **Go (gateway)**
 - Layout: `cmd/gateway`, `internal/...`.
@@ -168,7 +168,7 @@ Benchmark numbers will appear on a résumé. Treat them as evidence.
 4. **Observability + benchmarks** — OTel tracing across Kafka, dashboards, Gatling S1–S3, Chaos Mesh S4, S5–S6 scripts.
 5. **AWS + CI/CD** — Terraform, Helm, KEDA, GitHub Actions, full benchmark runs on EKS.
 
-Update the status line above when a phase's done criteria are met (see `docs/SPEC.md` §12).
+Update the status line above when a phase's done criteria are met (see `SPEC.md` §12).
 
 ## When unsure
 

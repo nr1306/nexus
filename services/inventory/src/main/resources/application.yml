@@ -1,0 +1,28 @@
+server:
+  port: ${SERVER_PORT:8102}
+
+spring:
+  application:
+    name: inventory
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/inventory_db}
+    username: ${DB_USER:nexus}
+    password: ${DB_PASSWORD:nexus}
+  flyway:
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: inventory-svc
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

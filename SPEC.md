@@ -298,8 +298,8 @@ nexus/
     scenarios/          # S5 seed data, S6 inconsistency injector
     results/            # committed JSON + generated README table
   docs/
-    SPEC.md             # this file
     adr/                # architecture decision records
+  SPEC.md               # this file
   CLAUDE.md
   Makefile              # make up, make test, make bench SCENARIO=s1
 ```
@@ -375,6 +375,6 @@ Target numbers — replace with measured results from `bench/results/` before us
 
 | Decision | Options | Current default |
 |---|---|---|
-| Fraud check order | (a) authorize payment → fraud check (current flow) · (b) fraud check first, so rejected orders never place a card hold | (a), revisit before Phase 1 |
+| Fraud check order | (a) authorize payment → fraud check (current flow) · (b) fraud check first, so rejected orders never place a card hold | (a), confirmed 2026-10-07 |
 | Project name | Nexus, or alternatives (Ledgerline, OrderFlow, Conductor…) | Nexus |
 | Event schema format | JSON Schema · Avro + schema registry | JSON Schema; Avro as stretch |
