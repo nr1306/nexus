@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/fulfillment/FulfillmentFailed.v1.schema.json",
+  "title": "FulfillmentFailed payload (event, topic fulfillment.events)",
+  "description": "No shipment was created. RESTRICTED_SKU: the carrier refuses an item; INVALID_REQUEST: malformed command; ORDER_CANCELLED: CancelShipment already ran for this order (a late create).",
+  "type": "object",
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "enum": [
+        "RESTRICTED_SKU",
+        "INVALID_REQUEST",
+        "ORDER_CANCELLED"
+      ]
+    }
+  }
+}

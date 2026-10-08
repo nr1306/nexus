@@ -1,0 +1,38 @@
+server:
+  port: ${SERVER_PORT:8105}
+
+spring:
+  application:
+    name: fulfillment
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/fulfillment_db}
+    username: ${DB_USER:nexus}
+    password: ${DB_PASSWORD:nexus}
+  flyway:
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: fulfillment-svc
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+
+nexus:
+  fulfillment:
+    topic-partitions: 12
+    topic-replicas: 1
+
+logging:
+  structured:
+    format:
+      console: ecs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

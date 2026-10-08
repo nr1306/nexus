@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/RefundPayment.v1.schema.json",
+  "title": "RefundPayment payload (compensation command, topic payment.commands)",
+  "description": "Refund the captured amount in full. Idempotent: refunding twice, or refunding an order with no successful capture, is a no-op. Once any REFUND outcome is stored, a later CapturePayment is rejected. Replies: PaymentRefunded or PaymentRefundFailed.",
+  "type": "object",
+  "required": [],
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Why the saga is compensating, for logs and audit."
+    }
+  }
+}

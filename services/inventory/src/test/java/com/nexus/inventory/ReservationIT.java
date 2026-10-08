@@ -183,6 +183,22 @@ class ReservationIT extends InventoryIntegrationTest {
     }
 
     @Test
+    void lateReserveAfterReleaseWithoutHoldIsRejected() {
+        String sku = newSku(10);
+        UUID orderId = UUID.randomUUID();
+
+        // The saga compensated while the reserve was still in a retry topic.
+        handler.handle(releaseCommand(orderId));
+        handler.handle(reserveCommand(orderId, Map.of(sku, 2)));
+
+        assertThat(available(sku)).isEqualTo(10);
+        assertThat(reserved(sku)).isZero();
+        EventEnvelope last = replies(orderId).getLast();
+        assertThat(last.eventType()).isEqualTo("InventoryRejected");
+        assertThat(last.payload().get("reason").asText()).isEqualTo("ALREADY_RELEASED");
+    }
+
+    @Test
     void commitSettlesHeldStockAndIsIdempotent() {
         String sku = newSku(10);
         UUID orderId = UUID.randomUUID();
@@ -217,7 +233,9 @@ class ReservationIT extends InventoryIntegrationTest {
         List<EventEnvelope> replies = replies(orderId);
         assertThat(replies.get(2).eventType()).isEqualTo("InventoryReleased");
         assertThat(replies.get(2).payload().get("items")).isEmpty();
-        assertThat(replies.get(3).eventType()).isEqualTo("InventoryReserved");
+        // The release left a marker, so a late reserve is rejected rather than creating a new hold.
+        assertThat(replies.get(3).eventType()).isEqualTo("InventoryRejected");
+        assertThat(replies.get(3).payload().get("reason").asText()).isEqualTo("ALREADY_RELEASED");
     }
 
     @Test

@@ -39,9 +39,9 @@ Failure → `COMPENSATING` (undo finished steps in reverse) → `CANCELLED`, or 
 | Reserve stock | none |
 | Authorize payment | ReleaseInventory |
 | Fraud reject / capture fail | VoidPayment, ReleaseInventory |
-| Fulfillment | RefundPayment, ReleaseInventory |
+| Fulfillment | RefundPayment, VoidPayment (no-op after refund), ReleaseInventory |
 
-The table covers business failures. On a **timeout** the saga also undoes the in-flight step (it may have succeeded unheard), e.g. a reserve timeout sends `ReleaseInventory`. See ADR 0003.
+The table covers business failures. On a **timeout** the saga also undoes the in-flight step (it may have succeeded unheard), e.g. a reserve timeout sends `ReleaseInventory`, a shipment timeout sends `CancelShipment` first. See ADR 0003 and 0006. While step 5 is awaited the state is `FULFILLING` (`PAYMENT_CAPTURED` is never stored).
 
 > **Open decision:** fraud check currently runs *after* payment authorization. Moving it before authorization is under consideration — see `SPEC.md` §14. Don't change the order without an ADR.
 
@@ -59,7 +59,7 @@ The table covers business failures. On a **timeout** the saga also undoes the in
 ## Repository layout
 
 ```
-contracts/            Protobuf (gRPC) + JSON Schemas for all events — source of truth for messages
+contracts/            Protobuf (gRPC, compiled by the `:contracts` Gradle module) + JSON Schemas for events — source of truth for messages
 libs/messaging/       Outbox writer, idempotent-consumer base class, retry/DLQ config
 libs/observability/   Shared metrics + tracing setup
 services/<name>/      One module per service (gateway is a Go module)
@@ -69,7 +69,7 @@ deploy/connect/       Debezium, OpenSearch sink, S3 sink connector configs
 infra/terraform/      vpc, eks, msk, rds, redis, opensearch, ecr, s3, iam, budget
 bench/                gatling/, chaos/, scenarios/, results/
 SPEC.md               Full project spec
-docs/adr/             Architecture decision records (0001 outbox, 0002 payment idempotency, 0003 saga)
+docs/adr/             Architecture decision records (0001 outbox, 0002 payment idempotency, 0003 saga, 0004 retry/DLQ, 0005 fraud, 0006 fulfillment/refund, 0007 reservation expiry)
 Makefile
 ```
 
@@ -96,15 +96,17 @@ If a command does not exist yet, add it to the Makefile rather than documenting 
 
 - Gradle wrapper 8.14.5 runs on the default JDK 17; the build uses a **Java 21 toolchain** that Gradle downloads automatically (foojay). Don't point `JAVA_HOME` at Homebrew's JDK 27 (Gradle 8.14 can't run on it).
 - Spring Boot **3.5.x**; versions live in `gradle/libs.versions.toml`.
-- Mock payment methods (`MockPaymentGateway`): `pm_card_visa` approves, `pm_card_chargeDeclined` / `pm_card_chargeDeclinedInsufficientFunds` decline, `pm_mock_captureFails` authorizes but fails capture.
+- gRPC: grpc-java 1.84 with protoc/protobuf **3.25.9** (grpc-java's tested line; keep them equal). Fraud rejects `pm_card_radarBlock` and customer `blocked-customer` (seeded), totals > 500,000 cents, and a customer's 6th order within 10 min, so test/load data needs many customers.
+- Mock payment methods (`MockPaymentGateway`): `pm_card_visa` approves, `pm_card_chargeDeclined` / `pm_card_chargeDeclinedInsufficientFunds` decline, `pm_mock_captureFails` authorizes but fails capture, `pm_mock_refundFails` captures but refuses the refund.
+- Fulfillment refuses SKUs in its `restricted_skus` table. `SKU-HAZMAT-01` is seeded there and stocked in Inventory, so ordering it exercises fulfillment failure → refund. Shipments are dispatched (and the customer notified) only on `OrderCompleted`; notifications are log lines (`LoggingNotificationSender`).
 - Place an order locally (after `make up`, starting the services, `make connectors`):
   `curl -X POST localhost:8101/orders -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' -d '{"customerId":"c1","currency":"USD","paymentMethod":"pm_card_visa","items":[{"sku":"SKU-0001","quantity":2,"unitPriceCents":1999}]}'`, then `GET localhost:8101/orders/<id>`. The REST API is on Order directly until the Go gateway (Phase 3) fronts it via gRPC; both call `OrderService`.
-- Ports: order **8101**, inventory **8102**, payment **8103**; Kafka 9092, Postgres 5432 (`order_db`, `inventory_db`, `payment_db`), Redis 6379, Kafka Connect 8083.
+- Ports: order **8101**, inventory **8102**, payment **8103**, fraud **8104** (HTTP) / **9090** (gRPC), fulfillment **8105**; Kafka 9092, Postgres 5432 (`order_db`, `inventory_db`, `payment_db`, `fraud_db`, `fulfillment_db`; a Postgres volume created before a service existed lacks its database: run `make clean` once, or `CREATE DATABASE fraud_db` / `fulfillment_db`), Redis 6379, Kafka Connect 8083.
 - Container images used by tests must match `deploy/compose/docker-compose.yml` (`postgres:16`, `apache/kafka:4.1.2`, `quay.io/debezium/connect:3.7.0.Final`).
 - Testcontainers is the Boot-managed 1.21.x. Don't add `debezium-testing-testcontainers` (it needs Testcontainers 2.x); run the Connect image as a `GenericContainer` instead.
 - End-to-end tests live in `tests/e2e` and only run with `-Pe2e` (see Makefile). They run each service's bootJar in an `eclipse-temurin:21-jre` container, because services can't share one JVM (same `application.yml` path and `V10__` migrations). Service logs: `tests/e2e/build/e2e-logs/`.
 - Integration tests: depend on `testImplementation(testFixtures(project(":libs:messaging")))` and use `NexusContainers` + `OutboxConnectors`. Follow `InventoryIntegrationTest`: one singleton Postgres/Kafka/Connect stack per test JVM, connector registered once, tests isolated by fresh SKUs/order ids instead of truncating.
-- Structured logging: services use `logging.structured.format.console: ecs` and put `orderId`, `sagaId`, `eventId`, `eventType` in the MDC around message handling (see `InventoryCommandHandler`). All three services have this.
+- Structured logging: services use `logging.structured.format.console: ecs` and put `orderId`, `sagaId`, `eventId`, `eventType` in the MDC around message handling (see `InventoryCommandHandler`). Every Kafka-consuming service has this.
 - To stop a service you started, kill it by PID or by its port (`lsof -ti tcp:8101 | xargs kill`). **Never** use broad `pkill -f` patterns: on macOS they match every app under `/Applications`.
 
 ## Non-negotiable rules (correctness)
@@ -126,7 +128,7 @@ These are the point of the project. Never violate them, even to make a test pass
 
 - Envelope on every message: `eventId` (UUID), `eventType`, `schemaVersion`, `orderId`, `sagaId`, `occurredAt` (UTC ISO-8601), `payload`.
 - W3C `traceparent` travels as a Kafka header — never drop headers when re-publishing (retries, DLQ replay).
-- Topics: `<service>.commands`, `<service>.events`, `order.events`, plus `<topic>.retry-1s|5s|30s` and `<topic>.dlq`.
+- Topics: `<service>.commands`, `<service>.events`, `order.events`, plus `<topic>.<group>.retry-1s|5s|30s` and `<topic>.<group>.dlq` (group in the name so groups never share retries; ADR 0004).
 - Any change to a message goes in `contracts/` first. Changes must be backward compatible; otherwise bump `schemaVersion` and handle both.
 - Event types are past tense (`PaymentAuthorized`); commands are imperative (`AuthorizePayment`).
 - The envelope `eventId` **is** the outbox row `id`; Debezium publishes it as the `id` header and consumers dedupe on it.
@@ -137,6 +139,8 @@ These are the point of the project. Never violate them, even to make a test pass
 - Publish: `OutboxWriter.append(topic, aggregateType, envelope)` inside the `@Transactional` method that changes state. It throws if there's no active transaction.
 - Consume: wrap every side effect in `IdempotentConsumer.handle(consumerGroup, envelope, sideEffect)`. It returns `false` and increments `duplicate_events_skipped_total{consumer_group}` on a duplicate.
 - Parse incoming values with `EnvelopeMapper.fromJson`. `InvalidEnvelopeException` is a permanent error (straight to DLQ).
+- Retry topics + DLQ are auto-configured for every `@KafkaListener` (needs `spring.kafka.consumer.group-id`; listener `groupId` must equal it, so one consumer group per service: Fulfillment reads commands and `order.events` in `fulfillment-svc`, ADR 0006). Throw for transient failures; reply (don't throw) for business rejections. Tune with `nexus.messaging.retry.*`.
+- DLQ admin on every service: `GET /admin/dlq`, `GET /admin/dlq/{dlq}/messages`, `POST /admin/dlq/{dlq}/replay[/{partition}/{offset}]`. Internal only.
 - These beans are auto-configured in any service that depends on `libs/messaging`.
 
 ## Coding conventions
@@ -193,14 +197,18 @@ Benchmark numbers will appear on a résumé. Treat them as evidence.
 
 ## Known risks to handle later
 
-- **Phase 2, retry topics break per-order ordering.** If a `ReleaseInventory` is processed before a retried `ReserveInventory` for the same order, release finds no hold and the late reserve then succeeds, leaving a hold nothing will release. Fix with a per-order release marker that makes later reserves reject as `ALREADY_RELEASED`.
 - **Payment provider calls hold a DB connection** for the call's duration (ADR 0002). Fine for the mock; measure with Stripe latency in S1.
-- **No retry/DLQ yet:** a handler exception (e.g. a provider void failure) is retried a few times by Spring Kafka's default error handler, then the record is skipped. Phase 2 retry topics + DLQ close this.
-- **Capture has no undo until Phase 2 refund:** a capture timeout where the capture actually happened ends in `NEEDS_ATTENTION` (the void fails with `ALREADY_CAPTURED`).
-- **Phase 2 saga states:** adding `FRAUD_APPROVED`, `PAYMENT_CAPTURED`, `FULFILLING` needs a **new** migration for the `saga_instances.state` CHECK; never edit V10.
+- **Retry chain (≈36 s) > saga step timeout (30 s):** a command stuck in retries gets re-sent once by Order. Harmless (idempotent receivers) but visible.
+- **Retry topics reorder messages per order.** Handled where it matters: Inventory's `released_orders` marker, Payment's `VOID`/`REFUND` rows and Fulfillment's `CANCELLED` shipment marker reject late reserves/authorizes/captures/creates. New consumers must think about the same.
+- **Fraud poller runs on every Order pod:** duplicate Evaluate calls for one order are possible with replicas; harmless (Fraud is idempotent per order, verdict applied only while awaited).
+- **`/admin/dlq` is unauthenticated:** keep it off the gateway (Phase 3) and behind network policy (Phase 5).
+- **Saga state CHECK:** a new saga state needs a **new** migration for the `saga_instances.state` CHECK (as V11 did); never edit an applied one.
+- **Commit after an expired hold can oversell:** only if a saga outlives the 10 min TTL and the stock was sold meanwhile; reported as `InventoryCommitted.shortfall` + `inventory_commit_shortfall_total` for Reconciliation (Phase 3) (ADR 0007).
+- **Notifications are sent inside the consumer transaction:** a rollback after a real send would resend. The log sender makes this moot; a real channel must use the stable notification id as its idempotency key (ADR 0006).
+- **Fulfillment failures happen after capture**, so the customer sees a charge and a refund (SPEC step order). Revisit if the Stripe adapter makes this visible.
 - **Idempotency-Key is global**, not scoped per customer/API key. Scope it when the gateway (Phase 3) passes the caller identity.
 
-## Build phases (current status: Phase 1 done criteria met; re-run `make phase1-check` on a clean commit for citable evidence. Phase 2 next)
+## Build phases (current status: Phase 1 done — `bench/results/phase1-done-check-20261007T123719Z.json` @ 3a92c2f; Phase 2 in progress)
 
 1. **Core saga, local** — Order, Inventory, Payment, outbox + Debezium, compensations, idempotency, Testcontainers tests.
 2. **Full flow + failure handling** — Fraud (gRPC + circuit breaker), Fulfillment/notifications, retry topics, DLQ + replay API, Stripe adapter.
@@ -221,7 +229,16 @@ Update the status line above when a phase's done criteria are met (see `SPEC.md`
 - [x] Cross-service end-to-end tests (`make e2e`): every service as a container + Debezium, incl. Payment outage + Order restart mid-saga
 - [x] Done check (`make phase1-check`): 1,000 mixed-failure orders → 0 stock drift, 0 double charges (`bench/results/phase1-done-check-*.json`)
 
-**Carried into Phase 2:** reservation expiry sweeper (SPEC §7), Redis stock read cache, refund compensation, `payment_attempts`.
+**Phase 2 progress:**
+- [x] Retry topics (1 s/5 s/30 s) + per-group DLQ + DLQ admin/replay; Inventory release marker (ADR 0004)
+- [x] Fraud service over gRPC + Resilience4j circuit breaker; saga step 3 (ADR 0005)
+- [x] Fulfillment + notifications; refund compensation; saga step 5 (ADR 0006)
+- [ ] Stripe test-mode adapter
+- [ ] Done check: killing any one service mid-load loses no orders once it restarts
+
+- [x] Reservation expiry sweeper (SPEC §7): overdue holds → `EXPIRED`, stock returned, `ReservationExpired` makes a still-running saga compensate; a commit after expiry re-takes stock or reports a shortfall (ADR 0007)
+
+**Carried into Phase 2:** Redis stock read cache, `payment_attempts`.
 
 ## When unsure
 

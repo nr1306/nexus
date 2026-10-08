@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+// Order -> Fraud (SPEC.md §3, saga step 3). Evaluate is idempotent per order_id: asking again returns the
+// stored decision, so callers may retry freely.
+package nexus.fraud.v1;
+
+option java_multiple_files = true;
+option java_package = "com.nexus.contracts.fraud.v1";
+
+service FraudService {
+  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
+}
+
+message EvaluateRequest {
+  string order_id = 1;        // UUID
+  string saga_id = 2;         // UUID, for log correlation
+  string customer_id = 3;
+  int64 amount_cents = 4;     // order total in minor units
+  string currency = 5;        // ISO 4217
+  string payment_method = 6;  // provider token, e.g. pm_card_visa
+  repeated LineItem items = 7;
+}
+
+message LineItem {
+  string sku = 1;
+  int32 quantity = 2;
+}
+
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  APPROVE = 1;
+  REJECT = 2;
+}
+
+message EvaluateResponse {
+  Decision decision = 1;
+  // Rules that fired, e.g. AMOUNT_LIMIT, VELOCITY, BLOCKLISTED_CUSTOMER, BLOCKLISTED_PAYMENT_METHOD. Empty on APPROVE.
+  repeated string reasons = 2;
+}

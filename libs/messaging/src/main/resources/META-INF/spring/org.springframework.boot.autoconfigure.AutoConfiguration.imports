@@ -1,1 +1,2 @@
 com.nexus.messaging.config.MessagingAutoConfiguration
+com.nexus.messaging.config.MessagingRetryAutoConfiguration

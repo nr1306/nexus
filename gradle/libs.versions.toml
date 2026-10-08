@@ -1,10 +1,25 @@
 [versions]
 spring-boot = "3.5.16"
 spring-dependency-management = "1.1.7"
+grpc = "1.84.1"
+# grpc-java 1.84 is built and tested against protobuf 3.25.x; keep protoc and the runtime on the same line.
+protobuf = "3.25.9"
+protobuf-plugin = "0.9.6"
+resilience4j = "2.4.0"
 
 [libraries]
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
+grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
+grpc-services = { module = "io.grpc:grpc-services", version.ref = "grpc" }
+grpc-inprocess = { module = "io.grpc:grpc-inprocess", version.ref = "grpc" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
+tomcat-annotations-api = { module = "org.apache.tomcat:annotations-api", version = "6.0.53" }
+resilience4j-circuitbreaker = { module = "io.github.resilience4j:resilience4j-circuitbreaker", version.ref = "resilience4j" }
+resilience4j-micrometer = { module = "io.github.resilience4j:resilience4j-micrometer", version.ref = "resilience4j" }
 spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
 
 [plugins]
+protobuf = { id = "com.google.protobuf", version.ref = "protobuf-plugin" }
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
 spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "spring-dependency-management" }

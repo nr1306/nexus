@@ -6,12 +6,17 @@ import com.nexus.messaging.envelope.EnvelopeMapper;
 import com.nexus.messaging.envelope.EventEnvelope;
 import com.nexus.messaging.testing.NexusContainers;
 import com.nexus.messaging.testing.OutboxConnectors;
+import com.nexus.order.fraud.FraudCheckRunner;
 import com.nexus.order.order.OrderService;
 import com.nexus.order.order.PlaceOrderRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -30,9 +35,23 @@ import java.util.UUID;
  * Shared stack for Order integration tests (see {@code InventoryIntegrationTest} for the pattern).
  * The timeout sweeper is disabled; tests trigger it explicitly.
  */
-@SpringBootTest(properties = "nexus.order.timeout-sweeper.enabled=false")
+@SpringBootTest(properties = {
+        "nexus.order.timeout-sweeper.enabled=false",
+        "nexus.order.fraud.auto-run=false"})
 @AutoConfigureMockMvc
+@Import(OrderIntegrationTest.StubFraudConfig.class)
 public abstract class OrderIntegrationTest {
+
+    /** Replaces the gRPC Fraud client; tests trigger checks with {@code fraudChecks.runPending()}. */
+    @TestConfiguration
+    static class StubFraudConfig {
+
+        @Bean
+        @Primary
+        StubFraudClient stubFraudClient() {
+            return new StubFraudClient();
+        }
+    }
 
     private static final Network NETWORK = Network.newNetwork();
     protected static final PostgreSQLContainer<?> POSTGRES = NexusContainers.postgres(NETWORK, "order_db");
@@ -64,6 +83,17 @@ public abstract class OrderIntegrationTest {
 
     @Autowired
     protected OrderService orderService;
+
+    @Autowired
+    protected StubFraudClient fraud;
+
+    @Autowired
+    protected FraudCheckRunner fraudChecks;
+
+    @BeforeEach
+    void approveFraudByDefault() {
+        fraud.set(StubFraudClient.Mode.APPROVE);
+    }
 
     @BeforeEach
     void registerConnectorOnce() {

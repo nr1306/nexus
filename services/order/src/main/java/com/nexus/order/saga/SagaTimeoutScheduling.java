@@ -2,12 +2,10 @@ package com.nexus.order.saga;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 
 /** Runs the timeout sweeper periodically. Disabled in tests that drive timeouts explicitly. */
 @Configuration(proxyBeanMethods = false)
-@EnableScheduling
 @ConditionalOnProperty(name = "nexus.order.timeout-sweeper.enabled", havingValue = "true", matchIfMissing = true)
 class SagaTimeoutScheduling {
 

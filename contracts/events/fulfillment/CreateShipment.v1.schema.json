@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/fulfillment/CreateShipment.v1.schema.json",
+  "title": "CreateShipment payload (command, topic fulfillment.commands)",
+  "description": "Create the order's shipment (at most one per order). The shipment is dispatched only once the order is COMPLETED. Replies: ShipmentCreated or FulfillmentFailed.",
+  "type": "object",
+  "required": [
+    "customerId",
+    "items"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "customerId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "sku",
+          "quantity"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sku": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

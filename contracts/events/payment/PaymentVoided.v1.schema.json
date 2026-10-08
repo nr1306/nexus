@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nexus.local/contracts/events/payment/PaymentVoided.v1.schema.json",
   "title": "PaymentVoided payload (event, topic payment.events)",
-  "description": "No authorization hold remains. voided=false means there was nothing to void.",
+  "description": "No authorization hold remains. voided=false means there was nothing to void: no successful authorization, or the payment was captured and then refunded.",
   "type": "object",
   "required": [
     "voided"

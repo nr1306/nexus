@@ -1,5 +1,6 @@
 package com.nexus.inventory;
 
+import com.nexus.messaging.dlq.DlqAdmin;
 import com.nexus.messaging.envelope.EnvelopeMapper;
 import com.nexus.messaging.envelope.EventEnvelope;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -29,6 +30,9 @@ class InventoryKafkaIT extends InventoryIntegrationTest {
 
     @Autowired
     EnvelopeMapper envelopeMapper;
+
+    @Autowired
+    DlqAdmin dlqAdmin;
 
     @Test
     void reserveCommandDeliveredTwiceProducesOneReservationAndOneReply() throws Exception {
@@ -70,6 +74,26 @@ class InventoryKafkaIT extends InventoryIntegrationTest {
                 .containsExactly("InventoryReserved", "InventoryReleased");
         assertThat(available(sku)).isEqualTo(10);
         assertThat(reserved(sku)).isZero();
+    }
+
+    @Test
+    void poisonMessageGoesToDlqWithoutBlockingTheOrdersNextCommand() throws Exception {
+        String sku = newSku(10);
+        UUID orderId = UUID.randomUUID();
+
+        try (var producer = producer()) {
+            producer.send(new ProducerRecord<>("inventory.commands", orderId.toString(), "{not an envelope")).get();
+            producer.send(new ProducerRecord<>("inventory.commands", orderId.toString(),
+                    envelopeMapper.toJson(reserveCommand(orderId, Map.of(sku, 1))))).get();
+        }
+
+        assertThat(repliesFor(orderId, 1, Duration.ofSeconds(1))).extracting(EventEnvelope::eventType)
+                .containsExactly("InventoryReserved");
+        await().atMost(Duration.ofSeconds(30)).until(() -> dlqAdmin.pending("inventory.commands.inventory-svc.dlq", 100)
+                .stream().anyMatch(m -> orderId.toString().equals(m.key())));
+        var dead = dlqAdmin.pending("inventory.commands.inventory-svc.dlq", 100).stream()
+                .filter(m -> orderId.toString().equals(m.key())).findFirst().orElseThrow();
+        assertThat(dead.exception()).isEqualTo("com.nexus.messaging.envelope.InvalidEnvelopeException");
     }
 
     private KafkaProducer<String, String> producer() {

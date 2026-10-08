@@ -15,6 +15,9 @@ public interface PaymentGateway {
 
     OperationResult voidAuthorization(String idempotencyKey, String authorizationId);
 
+    /** Refunds a captured payment in full. */
+    OperationResult refund(String idempotencyKey, String authorizationId, long amountCents, String currency);
+
     record AuthorizationResult(boolean approved, String authorizationId, String declineReason) {
 
         public static AuthorizationResult approved(String authorizationId) {

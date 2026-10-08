@@ -5,7 +5,7 @@
 set -euo pipefail
 
 CONNECT_URL="${CONNECT_URL:-http://localhost:8083}"
-SERVICES="${SERVICES:-order inventory payment}"
+SERVICES="${SERVICES:-order inventory payment fulfillment}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PG_USER="${POSTGRES_USER:-nexus}"
 

@@ -25,14 +25,16 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The whole Phase 1 system for end-to-end tests: one Postgres (a database per service), Kafka,
+ * The whole system for end-to-end tests: one Postgres (a database per service), Kafka,
  * Debezium Connect with the real outbox connectors, and each service's bootJar in its own JRE
  * container. Started once per test JVM. Service logs go to {@code tests/e2e/build/e2e-logs/}.
  */
 final class E2eStack {
 
     static final String JRE_IMAGE = "eclipse-temurin:21-jre";
-    static final List<String> SERVICES = List.of("inventory", "payment", "order");
+    static final List<String> SERVICES = List.of("inventory", "payment", "fraud", "fulfillment", "order");
+    /** Services that publish through an outbox and need a Debezium connector. */
+    static final List<String> OUTBOX_SERVICES = List.of("inventory", "payment", "fulfillment", "order");
 
     private static final Network NETWORK = Network.newNetwork();
     static final PostgreSQLContainer<?> POSTGRES = NexusContainers.postgres(NETWORK, "order_db");
@@ -54,16 +56,19 @@ final class E2eStack {
         Startables.deepStart(POSTGRES, KAFKA, CONNECT).join();
         db("order").execute("CREATE DATABASE inventory_db");
         db("order").execute("CREATE DATABASE payment_db");
+        db("order").execute("CREATE DATABASE fraud_db");
+        db("order").execute("CREATE DATABASE fulfillment_db");
 
         // Services run their Flyway migrations on startup; connectors need the outbox tables.
         SERVICES.forEach(E2eStack::startService);
-        SERVICES.forEach(s -> OutboxConnectors.register(CONNECT, db(s), s));
+        OUTBOX_SERVICES.forEach(s -> OutboxConnectors.register(CONNECT, db(s), s));
         started = true;
     }
 
     static synchronized void startService(String service) {
         GenericContainer<?> container = new GenericContainer<>(JRE_IMAGE)
                 .withNetwork(NETWORK)
+                .withNetworkAliases(service)
                 .withCopyFileToContainer(MountableFile.forHostPath(System.getProperty("nexus.jar." + service)), "/app.jar")
                 .withCommand("java", "-jar", "/app.jar")
                 .withEnv(Map.of(
@@ -71,6 +76,8 @@ final class E2eStack {
                         "DB_USER", NexusContainers.DB_USER,
                         "DB_PASSWORD", NexusContainers.DB_PASSWORD,
                         "KAFKA_BOOTSTRAP_SERVERS", "kafka:19092",
+                        "FRAUD_GRPC_TARGET", "fraud:9090",
+                        "GRPC_PORT", "9090",
                         "SERVER_PORT", "8080"))
                 .withExposedPorts(8080)
                 .withLogConsumer(frame -> appendLog(service, frame))

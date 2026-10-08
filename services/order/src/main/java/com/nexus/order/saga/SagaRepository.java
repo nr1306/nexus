@@ -88,6 +88,22 @@ public class SagaRepository {
                 MAPPER, orderId).stream().findFirst();
     }
 
+    /** Reads the saga without locking. */
+    public Optional<SagaInstance> findByOrderId(UUID orderId) {
+        return jdbcTemplate.query("SELECT " + COLUMNS + " FROM saga_instances WHERE order_id = ?", MAPPER, orderId)
+                .stream().findFirst();
+    }
+
+    /** Ids of sagas currently awaiting {@code step}, oldest deadline first. */
+    public List<UUID> findAwaiting(SagaStep step, int limit) {
+        return jdbcTemplate.queryForList("""
+                SELECT order_id FROM saga_instances
+                 WHERE step = ?
+                 ORDER BY step_deadline
+                 LIMIT ?
+                """, UUID.class, step.name(), limit);
+    }
+
     /** Ids of sagas whose awaited reply is overdue. */
     public List<UUID> findOverdue(Instant now, int limit) {
         return jdbcTemplate.queryForList("""

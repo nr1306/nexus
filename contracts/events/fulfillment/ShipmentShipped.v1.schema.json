@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/fulfillment/ShipmentShipped.v1.schema.json",
+  "title": "ShipmentShipped payload (event, topic fulfillment.events)",
+  "description": "The shipment was dispatched after OrderCompleted. Informational: the saga is already COMPLETED and ignores it.",
+  "type": "object",
+  "required": [
+    "shipmentId",
+    "trackingNumber"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "shipmentId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "trackingNumber": {
+      "type": "string"
+    }
+  }
+}

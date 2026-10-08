@@ -1,0 +1,30 @@
+server:
+  port: ${SERVER_PORT:8104}
+
+spring:
+  application:
+    name: fraud
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/fraud_db}
+    username: ${DB_USER:nexus}
+    password: ${DB_PASSWORD:nexus}
+  flyway:
+    locations: classpath:db/migration
+
+nexus:
+  fraud:
+    grpc-port: ${GRPC_PORT:9090}
+    max-amount-cents: 500000
+    velocity-max-orders: 5
+    velocity-window: PT10M
+
+logging:
+  structured:
+    format:
+      console: ecs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

@@ -37,9 +37,10 @@ abstract class E2eSupport {
     }
 
     /** POSTs an order and returns the response body (orderId, status, ...). */
-    protected static JsonNode placeOrder(String idempotencyKey, String paymentMethod, Map<String, Integer> items) {
+    protected static JsonNode placeOrder(String idempotencyKey, String customerId, String paymentMethod,
+                                         Map<String, Integer> items) {
         ObjectNode body = JSON.createObjectNode()
-                .put("customerId", "e2e-customer")
+                .put("customerId", customerId)
                 .put("currency", "USD")
                 .put("paymentMethod", paymentMethod);
         var lines = body.putArray("items");
@@ -63,8 +64,14 @@ abstract class E2eSupport {
         }
     }
 
+    /** Places an order for a fresh customer, so Fraud's per-customer velocity rule doesn't interfere. */
     protected static UUID placeOrder(String paymentMethod, Map<String, Integer> items) {
-        return UUID.fromString(placeOrder(UUID.randomUUID().toString(), paymentMethod, items).get("orderId").asText());
+        return UUID.fromString(placeOrder(UUID.randomUUID().toString(), newCustomer(), paymentMethod, items)
+                .get("orderId").asText());
+    }
+
+    protected static String newCustomer() {
+        return "e2e-" + UUID.randomUUID();
     }
 
     protected static String sagaState(UUID orderId) {
@@ -88,6 +95,16 @@ abstract class E2eSupport {
 
     protected static int reserved(String sku) {
         return E2eStack.db("inventory").queryForObject("SELECT reserved FROM stock WHERE sku = ?", Integer.class, sku);
+    }
+
+    protected static String shipmentStatus(UUID orderId) {
+        return E2eStack.db("fulfillment").query("SELECT status FROM shipments WHERE order_id = ?",
+                (rs, i) -> rs.getString(1), orderId).stream().findFirst().orElse(null);
+    }
+
+    protected static Set<String> notifications(UUID orderId) {
+        return Set.copyOf(E2eStack.db("fulfillment").queryForList(
+                "SELECT type FROM notifications WHERE order_id = ?", String.class, orderId));
     }
 
     /** Payment outcomes for the order as "OPERATION:STATUS", e.g. "CAPTURE:SUCCEEDED". */

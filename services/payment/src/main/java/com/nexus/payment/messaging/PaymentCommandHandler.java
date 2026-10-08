@@ -46,6 +46,7 @@ public class PaymentCommandHandler {
             case PaymentMessages.AUTHORIZE_PAYMENT -> paymentService.authorize(command);
             case PaymentMessages.CAPTURE_PAYMENT -> paymentService.capture(command);
             case PaymentMessages.VOID_PAYMENT -> paymentService.voidPayment(command);
+            case PaymentMessages.REFUND_PAYMENT -> paymentService.refund(command);
             default -> log.warn("Ignoring unknown command type");
         }
     }

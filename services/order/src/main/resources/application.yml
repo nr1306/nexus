@@ -35,6 +35,11 @@ nexus:
       interval: PT1S
     topic-partitions: 12
     topic-replicas: 1
+    fraud:
+      target: ${FRAUD_GRPC_TARGET:localhost:9090}
+      call-deadline: PT2S
+      auto-run: true
+      poll-interval: PT1S
 
 logging:
   structured:

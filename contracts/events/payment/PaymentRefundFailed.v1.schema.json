@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/PaymentRefundFailed.v1.schema.json",
+  "title": "PaymentRefundFailed payload (event, topic payment.events)",
+  "description": "The provider permanently refused the refund; the saga ends in NEEDS_ATTENTION. Transient provider errors are retried, not replied.",
+  "type": "object",
+  "required": [
+    "reason"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "type": "string"
+    }
+  }
+}

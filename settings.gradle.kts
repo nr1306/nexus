@@ -5,9 +5,12 @@ plugins {
 rootProject.name = "nexus"
 
 include(
+    "contracts",
     "libs:messaging",
     "services:order",
     "services:inventory",
     "services:payment",
+    "services:fraud",
+    "services:fulfillment",
     "tests:e2e",
 )

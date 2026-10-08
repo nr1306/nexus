@@ -11,7 +11,11 @@
   "properties": {
     "reason": {
       "type": "string",
-      "description": "Why the saga failed, e.g. OUT_OF_STOCK, CARD_DECLINED, CAPTURE_DECLINED, TIMEOUT_RESERVE_INVENTORY."
+      "description": "Why the saga failed, e.g. OUT_OF_STOCK, CARD_DECLINED, CAPTURE_DECLINED, FRAUD_REJECTED, RESTRICTED_SKU, TIMEOUT_RESERVE_INVENTORY."
+    },
+    "customerId": {
+      "type": "string",
+      "description": "Added in Phase 2 (optional, for notifications)."
     }
   }
 }

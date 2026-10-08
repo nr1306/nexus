@@ -200,6 +200,82 @@ class PaymentIT extends PaymentIntegrationTest {
     }
 
     @Test
+    void capturedPaymentIsRefundedOnceAndDuplicateRefundIsSkipped() {
+        UUID orderId = UUID.randomUUID();
+        handler.handle(authorizeCommand(orderId, 7_500, VISA));
+        handler.handle(captureCommand(orderId));
+        EventEnvelope refund = refundCommand(orderId);
+
+        assertThat(handler.handle(refund)).isTrue();
+        assertThat(handler.handle(refund)).isFalse();
+        handler.handle(refundCommand(orderId));
+
+        List<EventEnvelope> refunds = replies(orderId).subList(2, 4);
+        assertThat(refunds).extracting(EventEnvelope::eventType).containsOnly("PaymentRefunded");
+        assertThat(refunds.get(0).payload().get("refunded").asBoolean()).isTrue();
+        assertThat(refunds.get(0).payload().get("amountCents").asLong()).isEqualTo(7_500);
+        assertThat(refunds.get(1).payload()).isEqualTo(refunds.get(0).payload());
+        assertThat(paymentRows(orderId, "REFUND")).isEqualTo(1);
+        assertThat(gateway.calls(orderId + ":REFUND")).isEqualTo(1);
+    }
+
+    @Test
+    void refundWithoutCaptureIsNoOpAndBlocksLateCapture() {
+        UUID orderId = UUID.randomUUID();
+        handler.handle(authorizeCommand(orderId, 4999, VISA));
+
+        // Capture timed out: the saga refunds (nothing captured yet), then the capture command arrives late.
+        handler.handle(refundCommand(orderId));
+        handler.handle(captureCommand(orderId));
+        handler.handle(voidCommand(orderId));
+
+        List<EventEnvelope> replies = replies(orderId);
+        assertThat(replies).extracting(EventEnvelope::eventType)
+                .containsExactly("PaymentAuthorized", "PaymentRefunded", "CaptureFailed", "PaymentVoided");
+        assertThat(replies.get(1).payload().get("refunded").asBoolean()).isFalse();
+        assertThat(replies.get(1).payload().has("amountCents")).isFalse();
+        assertThat(reason(replies.get(2))).isEqualTo("ORDER_CANCELLED");
+        assertThat(replies.get(3).payload().get("voided").asBoolean()).isTrue();
+        assertThat(gateway.calls(orderId + ":CAPTURE")).isZero();
+        assertThat(gateway.calls(orderId + ":REFUND")).isZero();
+    }
+
+    @Test
+    void voidAfterRefundIsNoOp() {
+        UUID orderId = UUID.randomUUID();
+        handler.handle(authorizeCommand(orderId, 4999, VISA));
+        handler.handle(captureCommand(orderId));
+
+        handler.handle(refundCommand(orderId));
+        handler.handle(voidCommand(orderId));
+
+        EventEnvelope reply = replies(orderId).getLast();
+        assertThat(reply.eventType()).isEqualTo("PaymentVoided");
+        assertThat(reply.payload().get("voided").asBoolean()).isFalse();
+        assertThat(gateway.calls(orderId + ":VOID")).isZero();
+    }
+
+    @Test
+    void refundRefusedByProviderRepliesRefundFailed() {
+        UUID orderId = UUID.randomUUID();
+        handler.handle(authorizeCommand(orderId, 4999, MockPaymentGateway.REFUND_FAILS));
+        handler.handle(captureCommand(orderId));
+
+        handler.handle(refundCommand(orderId));
+        handler.handle(refundCommand(orderId));
+
+        List<EventEnvelope> replies = replies(orderId);
+        assertThat(replies).extracting(EventEnvelope::eventType)
+                .containsExactly("PaymentAuthorized", "PaymentCaptured", "PaymentRefundFailed", "PaymentRefundFailed");
+        assertThat(reason(replies.get(2))).isEqualTo("REFUND_DECLINED");
+        assertThat(gateway.calls(orderId + ":REFUND")).isEqualTo(1);
+    }
+
+    private EventEnvelope refundCommand(UUID orderId) {
+        return command("RefundPayment", orderId, objectMapper.createObjectNode().put("reason", "TEST"));
+    }
+
+    @Test
     void concurrentCaptureCommandsRecordOneCapture() throws Exception {
         UUID orderId = UUID.randomUUID();
         handler.handle(authorizeCommand(orderId, 4999, VISA));

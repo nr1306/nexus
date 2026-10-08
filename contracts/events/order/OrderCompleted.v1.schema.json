@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nexus.local/contracts/events/order/OrderCompleted.v1.schema.json",
   "title": "OrderCompleted payload (event, topic order.events)",
-  "description": "Every saga step succeeded: stock committed, payment captured.",
+  "description": "Every saga step succeeded: stock committed, payment captured, shipment created.",
   "type": "object",
   "required": [
     "totalCents",
@@ -17,6 +17,10 @@
     "currency": {
       "type": "string",
       "pattern": "^[A-Z]{3}$"
+    },
+    "customerId": {
+      "type": "string",
+      "description": "Added in Phase 2 (optional, for notifications)."
     }
   }
 }

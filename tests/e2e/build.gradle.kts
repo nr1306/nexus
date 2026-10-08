@@ -11,7 +11,7 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-val services = listOf("order", "inventory", "payment")
+val services = listOf("order", "inventory", "payment", "fraud", "fulfillment")
 
 tasks.test {
     // Slow (each service runs as a container): only with `-Pe2e`, i.e. `make e2e` / `make phase1-check`.

@@ -108,13 +108,13 @@ stateDiagram-v2
 | 2 Authorize payment | AuthorizePayment (Kafka) | PaymentAuthorized | PaymentDeclined | ReleaseInventory |
 | 3 Fraud check | Evaluate (gRPC, circuit breaker) | APPROVE | REJECT, or breaker open past deadline | VoidPayment, ReleaseInventory |
 | 4 Capture payment | CapturePayment (Kafka) | PaymentCaptured | CaptureFailed | VoidPayment, ReleaseInventory |
-| 5 Fulfill | CreateShipment (Kafka) | ShipmentCreated | FulfillmentFailed | RefundPayment, ReleaseInventory |
+| 5 Fulfill | CreateShipment (Kafka) | ShipmentCreated | FulfillmentFailed | RefundPayment, VoidPayment (no-op after refund), ReleaseInventory; on timeout CancelShipment first |
 | 6 Complete | CommitInventory (Kafka, no reply awaited) | OrderCompleted event | — | — |
 
-- Phase 1 runs steps 1, 2, 4 and 6; Phase 2 adds 3 and 5. Design and timeout rules: ADR 0003.
+- Phase 1 runs steps 1, 2, 4 and 6; Phase 2 adds 3 (ADR 0005) and 5 (ADR 0006). Design and timeout rules: ADR 0003. While step 5 is awaited the saga is `FULFILLING`; `PAYMENT_CAPTURED` is a transition only.
 - Every step has a deadline (default 30 s). A scheduler scans `saga_instances` for overdue steps, retries the command once, then compensates.
 - Compensations are idempotent commands with retries; releasing or refunding twice is a no-op.
-- Notifications are not saga steps: Fulfillment consumes `order.events` and sends confirmation, cancellation and shipping messages asynchronously.
+- Notifications are not saga steps: Fulfillment consumes `order.events` and sends confirmation, cancellation and shipping messages asynchronously. The shipment is dispatched on `OrderCompleted`, never before the saga commits (ADR 0006).
 - `NEEDS_ATTENTION` is reached only when a compensation itself fails after all retries; Reconciliation picks these up.
 
 ---
@@ -131,10 +131,12 @@ Every message is keyed by `orderId`, so all events for one order land on one par
 | inventory.events | Inventory (outbox) | order-saga, reconciliation | 12 |
 | payment.events | Payment (outbox) | order-saga, reconciliation | 12 |
 | fulfillment.events | Fulfillment (outbox) | order-saga, reconciliation | 12 |
-| order.events | Order (outbox) | fulfillment-notify, reconciliation, audit-sink | 12 |
-| `<topic>.retry-1s / 5s / 30s` | Spring Kafka retry | same group as source | 12 |
-| `<topic>.dlq` | Spring Kafka retry | admin API (replay) | 3 |
+| order.events | Order (outbox) | fulfillment-svc, reconciliation, audit-sink | 12 |
+| `<topic>.<group>.retry-1s / 5s / 30s` | Spring Kafka retry | the group that failed | 12 |
+| `<topic>.<group>.dlq` | Spring Kafka retry | DLQ recorder; admin API (replay) | 12 |
 
+- Retry/DLQ topics carry the consumer group so groups sharing a topic never share retries (ADR 0004).
+- Fulfillment reads `fulfillment.commands` and `order.events` in one group, `fulfillment-svc` (ADR 0006).
 - 12 partitions to start; benchmarks sweep 6 / 12 / 24 to show scaling with consumers.
 - Producers: `acks=all`, idempotence on. Consumers commit offsets only after the DB transaction commits.
 - Schemas: versioned JSON Schema in `contracts/` (Avro + schema registry is a stretch goal).
@@ -186,11 +188,11 @@ Delivery is **at-least-once** everywhere; correctness comes from idempotent cons
 |---|---|---|
 | Retries with backoff | Spring Kafka non-blocking retry topics: 1 s, 5 s, 30 s; transient errors only | A slow dependency doesn't block the partition |
 | Dead-letter queue | After last retry → `<topic>.dlq` with error headers; permanent errors go straight there | Poison messages isolated, not lost |
-| DLQ replay | Admin API: list, replay one or all after a fix | Recovery is an operation, not manual SQL |
+| DLQ replay | Admin API `/admin/dlq` on each service: list, replay one or all after a fix (ADR 0004) | Recovery is an operation, not manual SQL |
 | Event replay | Reset consumer-group offsets to rebuild read models; S3 sink archives events beyond retention | Read models are rebuildable |
 | Circuit breaker | Resilience4j on Fraud gRPC and Stripe adapter | One failing dependency doesn't exhaust threads |
 | Rate limiting | Redis token bucket (atomic Lua) per API key at gateway; 429 + Retry-After | Overload shed at the edge |
-| Reservation TTL | Reservations expire after 10 min; sweeper releases holds | Abandoned sagas can't lock stock forever |
+| Reservation TTL | Reservations expire after 10 min; sweeper releases holds and emits `ReservationExpired` so a still-running saga compensates (ADR 0007) | Abandoned sagas can't lock stock forever |
 
 **Reconciliation (every 60 s)** builds a per-order projection from all `*.events` topics and checks:
 
@@ -322,9 +324,9 @@ Each phase ends with something demoable. Phase 1 alone is resume-worthy.
 - **Done when:** 1,000 scripted orders with mixed failures end with 0 stock drift and 0 double charges (`make phase1-check`)
 
 ### Phase 2 — Full flow + failure handling (weeks 3–4)
-- [ ] Fraud service over gRPC with Resilience4j circuit breaker
-- [ ] Fulfillment + notifications; step 5 and refund compensation
-- [ ] Retry topics, DLQs, admin DLQ replay endpoint
+- [x] Fraud service over gRPC with Resilience4j circuit breaker (ADR 0005)
+- [x] Fulfillment + notifications; step 5 and refund compensation (ADR 0006)
+- [x] Retry topics, DLQs, admin DLQ replay endpoint
 - [ ] Stripe test-mode adapter alongside the mock
 - **Done when:** killing any one service mid-load loses no orders once it restarts
 
@@ -376,6 +378,6 @@ Target numbers — replace with measured results from `bench/results/` before us
 
 | Decision | Options | Current default |
 |---|---|---|
-| Fraud check order | (a) authorize payment → fraud check (current flow) · (b) fraud check first, so rejected orders never place a card hold | (a), confirmed 2026-10-07 |
+| Fraud check order | (a) authorize payment → fraud check (current flow) · (b) fraud check first, so rejected orders never place a card hold | (a), confirmed 2026-10-07; built in ADR 0005 |
 | Project name | Nexus, or alternatives (Ledgerline, OrderFlow, Conductor…) | Nexus |
 | Event schema format | JSON Schema · Avro + schema registry | JSON Schema; Avro as stretch |

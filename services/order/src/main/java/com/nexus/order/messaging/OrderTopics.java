@@ -14,6 +14,8 @@ public class OrderTopics {
     public static final String INVENTORY_EVENTS = "inventory.events";
     public static final String PAYMENT_COMMANDS = "payment.commands";
     public static final String PAYMENT_EVENTS = "payment.events";
+    public static final String FULFILLMENT_COMMANDS = "fulfillment.commands";
+    public static final String FULFILLMENT_EVENTS = "fulfillment.events";
 
     @Bean
     NewTopic orderEventsTopic(OrderProperties properties) {

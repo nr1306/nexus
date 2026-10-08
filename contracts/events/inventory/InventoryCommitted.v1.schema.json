@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nexus.local/contracts/events/inventory/InventoryCommitted.v1.schema.json",
   "title": "InventoryCommitted payload (event, topic inventory.events)",
-  "description": "Held stock for the order is now committed. items lists what this commit settled; empty if nothing was held.",
+  "description": "Held stock for the order is now committed. items lists what this commit settled; empty if nothing was held. If the hold had expired, the stock is taken again; what could not be taken is listed in shortfall (the order is oversold).",
   "type": "object",
   "required": [
     "items"
@@ -29,6 +29,28 @@
           }
         }
       }
+    },
+    "shortfall": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sku",
+          "quantity"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sku": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "description": "Present only when non-empty."
     }
   }
 }

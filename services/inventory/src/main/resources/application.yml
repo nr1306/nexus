@@ -24,6 +24,10 @@ spring:
 nexus:
   inventory:
     reservation-ttl: PT10M
+    expiry-sweep-batch-size: 100
+    expiry-sweeper:
+      enabled: true
+      interval: PT10S
     topic-partitions: 12
     topic-replicas: 1
 

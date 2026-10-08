@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>{@code pm_card_chargeDeclined} → authorization declined (CARD_DECLINED)</li>
  *   <li>{@code pm_card_chargeDeclinedInsufficientFunds} → declined (INSUFFICIENT_FUNDS)</li>
  *   <li>{@code pm_mock_captureFails} → authorized, but capture fails (mock only)</li>
+ *   <li>{@code pm_mock_refundFails} → authorized and captured, but the refund is refused (mock only)</li>
  *   <li>anything else → approved</li>
  * </ul>
  * Results are derived from the idempotency key, so a repeated key returns the same result even after
@@ -28,9 +29,11 @@ public class MockPaymentGateway implements PaymentGateway {
     public static final String DECLINED = "pm_card_chargeDeclined";
     public static final String INSUFFICIENT_FUNDS = "pm_card_chargeDeclinedInsufficientFunds";
     public static final String CAPTURE_FAILS = "pm_mock_captureFails";
+    public static final String REFUND_FAILS = "pm_mock_refundFails";
 
     private static final String AUTH_PREFIX = "mock_auth_";
     private static final String NO_CAPTURE_PREFIX = "mock_auth_nocap_";
+    private static final String NO_REFUND_PREFIX = "mock_auth_noref_";
 
     private final Duration latency;
 
@@ -53,6 +56,7 @@ public class MockPaymentGateway implements PaymentGateway {
             case DECLINED -> AuthorizationResult.declined("CARD_DECLINED");
             case INSUFFICIENT_FUNDS -> AuthorizationResult.declined("INSUFFICIENT_FUNDS");
             case CAPTURE_FAILS -> AuthorizationResult.approved(NO_CAPTURE_PREFIX + stableId(idempotencyKey));
+            case REFUND_FAILS -> AuthorizationResult.approved(NO_REFUND_PREFIX + stableId(idempotencyKey));
             default -> AuthorizationResult.approved(AUTH_PREFIX + stableId(idempotencyKey));
         };
     }
@@ -69,6 +73,14 @@ public class MockPaymentGateway implements PaymentGateway {
     public OperationResult voidAuthorization(String idempotencyKey, String authorizationId) {
         record(idempotencyKey);
         return OperationResult.success();
+    }
+
+    @Override
+    public OperationResult refund(String idempotencyKey, String authorizationId, long amountCents, String currency) {
+        record(idempotencyKey);
+        return authorizationId.startsWith(NO_REFUND_PREFIX)
+                ? OperationResult.failed("REFUND_DECLINED")
+                : OperationResult.success();
     }
 
     /** Number of provider calls made with this idempotency key (test hook). */

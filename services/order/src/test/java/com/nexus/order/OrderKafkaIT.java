@@ -21,14 +21,14 @@ import static org.awaitility.Awaitility.await;
 
 /**
  * Order over real Kafka: commands leave via outbox + Debezium; replies arrive on inventory.events /
- * payment.events, playing the role of Inventory and Payment.
+ * payment.events / fulfillment.events, playing the role of Inventory, Payment and Fulfillment.
  */
 class OrderKafkaIT extends OrderIntegrationTest {
 
     @Test
     void sagaCompletesOverKafka() throws Exception {
         UUID orderId = placeOrder();
-        try (var commands = consumer(List.of("inventory.commands", "payment.commands"));
+        try (var commands = consumer(List.of("inventory.commands", "payment.commands", "fulfillment.commands"));
              var producer = producer()) {
 
             EventEnvelope reserve = awaitCommand(commands, orderId, "ReserveInventory");
@@ -37,8 +37,15 @@ class OrderKafkaIT extends OrderIntegrationTest {
             EventEnvelope authorize = awaitCommand(commands, orderId, "AuthorizePayment");
             send(producer, "payment.events", replyTo(authorize, "PaymentAuthorized"));
 
+            await().atMost(Duration.ofSeconds(30)).until(() -> state(orderId).equals("PAYMENT_AUTHORIZED"));
+            fraudChecks.runPending();
+
             EventEnvelope capture = awaitCommand(commands, orderId, "CapturePayment");
             send(producer, "payment.events", replyTo(capture, "PaymentCaptured"));
+
+            EventEnvelope ship = awaitCommand(commands, orderId, "CreateShipment");
+            send(producer, "fulfillment.events", replyTo(ship, "ShipmentCreated",
+                    objectMapper.createObjectNode().put("shipmentId", UUID.randomUUID().toString())));
 
             awaitCommand(commands, orderId, "CommitInventory");
         }

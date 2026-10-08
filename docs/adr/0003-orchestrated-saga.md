@@ -26,6 +26,7 @@ An order touches stock (Inventory) and money (Payment). There is no distributed 
    | timeout on reserve / authorize / capture | as above plus the in-flight step's undo |
 
    Capture has no undo in Phase 1 (refund arrives in Phase 2). After a capture timeout the void runs and, if the capture had in fact happened, fails with `ALREADY_CAPTURED` → `NEEDS_ATTENTION`.
+   *Superseded by ADR 0006:* capture is undone by `RefundPayment`, so a capture timeout now ends `CANCELLED` with the money refunded.
 6. **Deadlines.** Each step waits `nexus.order.step-timeout` (30 s). A scheduled sweeper finds overdue sagas and claims each with `FOR UPDATE SKIP LOCKED` (safe on several pods). A forward step is re-sent once (`max-step-attempts: 2`) and then compensated. A compensation step is re-sent up to `max-compensation-attempts` (5) and then the saga goes to `NEEDS_ATTENTION`. Re-sent commands get a new `eventId`; receivers stay correct because they are idempotent per order (ADR 0002, Inventory's existing-hold check).
 7. **Per-order ordering is relied on.** All commands for an order go to the same partition of `inventory.commands` / `payment.commands` (key = `orderId`), so e.g. `ReserveInventory` is always processed before a later `ReleaseInventory` or `CommitInventory`.
 

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nexus.local/contracts/events/payment/CaptureFailed.v1.schema.json",
   "title": "CaptureFailed payload (event, topic payment.events)",
-  "description": "Nothing was charged.",
+  "description": "Nothing was charged. ORDER_CANCELLED: a refund was already recorded for this order (a late capture after compensation started).",
   "type": "object",
   "required": [
     "reason"
@@ -13,7 +13,8 @@
       "enum": [
         "NOT_AUTHORIZED",
         "AUTHORIZATION_VOIDED",
-        "CAPTURE_DECLINED"
+        "CAPTURE_DECLINED",
+        "ORDER_CANCELLED"
       ]
     }
   }

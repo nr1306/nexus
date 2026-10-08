@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/payment/PaymentRefunded.v1.schema.json",
+  "title": "PaymentRefunded payload (event, topic payment.events)",
+  "description": "No captured money remains with the merchant. refunded=false means nothing had been captured; amountCents/currency are present only when refunded=true.",
+  "type": "object",
+  "required": [
+    "refunded"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "refunded": {
+      "type": "boolean"
+    },
+    "amountCents": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    }
+  }
+}

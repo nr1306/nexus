@@ -25,7 +25,7 @@ import java.util.UUID;
  * test JVM, with the real outbox connector registered. Tests isolate themselves with fresh SKUs and
  * order ids rather than truncating tables.
  */
-@SpringBootTest
+@SpringBootTest(properties = "nexus.inventory.expiry-sweeper.enabled=false")
 public abstract class InventoryIntegrationTest {
 
     private static final Network NETWORK = Network.newNetwork();

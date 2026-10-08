@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/inventory/ReservationExpired.v1.schema.json",
+  "title": "ReservationExpired payload (event, topic inventory.events)",
+  "description": "The order's hold outlived its TTL and the sweeper returned the stock (SPEC \u00a77). The order is marked released, so a later ReserveInventory is rejected. Not a reply: a saga still in its forward steps compensates (RESERVATION_EXPIRED); a finished or compensating saga ignores it. sagaId is the nil UUID for holds created before reservations recorded their saga.",
+  "type": "object",
+  "required": [
+    "items"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sku",
+          "quantity"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sku": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

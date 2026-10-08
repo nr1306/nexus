@@ -1,5 +1,7 @@
 package com.nexus.payment.payment;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 /**
  * Payloads of payment commands and events. Schemas: {@code contracts/events/payment/}.
  */
@@ -8,6 +10,7 @@ public final class PaymentMessages {
     public static final String AUTHORIZE_PAYMENT = "AuthorizePayment";
     public static final String CAPTURE_PAYMENT = "CapturePayment";
     public static final String VOID_PAYMENT = "VoidPayment";
+    public static final String REFUND_PAYMENT = "RefundPayment";
 
     public static final String PAYMENT_AUTHORIZED = "PaymentAuthorized";
     public static final String PAYMENT_DECLINED = "PaymentDeclined";
@@ -15,6 +18,8 @@ public final class PaymentMessages {
     public static final String CAPTURE_FAILED = "CaptureFailed";
     public static final String PAYMENT_VOIDED = "PaymentVoided";
     public static final String PAYMENT_VOID_FAILED = "PaymentVoidFailed";
+    public static final String PAYMENT_REFUNDED = "PaymentRefunded";
+    public static final String PAYMENT_REFUND_FAILED = "PaymentRefundFailed";
 
     /** Failure reasons recorded in {@code payments.failure_reason} and sent in replies. */
     public static final String INVALID_REQUEST = "INVALID_REQUEST";
@@ -45,5 +50,12 @@ public final class PaymentMessages {
     }
 
     public record PaymentVoidFailed(String reason) {
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record PaymentRefunded(boolean refunded, Long amountCents, String currency) {
+    }
+
+    public record PaymentRefundFailed(String reason) {
     }
 }

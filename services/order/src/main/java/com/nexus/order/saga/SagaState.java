@@ -1,10 +1,17 @@
 package com.nexus.order.saga;
 
-/** Saga states (SPEC.md §4). Phase 1 runs reserve → authorize → capture; fraud and fulfillment come in Phase 2. */
+/**
+ * Saga states (SPEC.md §4). While a forward step is awaited the state is the previous step's result,
+ * except fulfillment: PAYMENT_CAPTURED becomes FULFILLING in the same transaction that sends
+ * CreateShipment, so PAYMENT_CAPTURED is never stored (ADR 0006).
+ */
 public enum SagaState {
     PENDING,
     INVENTORY_RESERVED,
     PAYMENT_AUTHORIZED,
+    FRAUD_APPROVED,
+    PAYMENT_CAPTURED,
+    FULFILLING,
     COMPLETED,
     COMPENSATING,
     CANCELLED,

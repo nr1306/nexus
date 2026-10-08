@@ -13,6 +13,8 @@ import com.nexus.payment.payment.PaymentMessages.CaptureFailed;
 import com.nexus.payment.payment.PaymentMessages.PaymentAuthorized;
 import com.nexus.payment.payment.PaymentMessages.PaymentCaptured;
 import com.nexus.payment.payment.PaymentMessages.PaymentDeclined;
+import com.nexus.payment.payment.PaymentMessages.PaymentRefundFailed;
+import com.nexus.payment.payment.PaymentMessages.PaymentRefunded;
 import com.nexus.payment.payment.PaymentMessages.PaymentVoidFailed;
 import com.nexus.payment.payment.PaymentMessages.PaymentVoided;
 import com.nexus.payment.payment.PaymentRecord.Operation;
@@ -29,7 +31,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * Authorize, capture and void, each at most once per order. Every method runs inside the caller's
+ * Authorize, capture, void and refund, each at most once per order. Every method runs inside the caller's
  * idempotent-consumer transaction: the payments row and the reply in the outbox commit together.
  * The provider call happens inside that transaction with an idempotency key, so if the transaction
  * rolls back after the provider acted, the redelivery gets the provider's original result (ADR 0002).
@@ -91,6 +93,11 @@ public class PaymentService {
             if (payments.find(orderId, Operation.VOID).filter(PaymentRecord::succeeded).isPresent()) {
                 return failed(orderId, Operation.CAPTURE, PaymentMessages.AUTHORIZATION_VOIDED);
             }
+            // Any refund outcome, even SKIPPED, means the saga is compensating: a capture arriving late
+            // (e.g. from a retry topic) must not charge the card after the refund step has run.
+            if (payments.find(orderId, Operation.REFUND).isPresent()) {
+                return failed(orderId, Operation.CAPTURE, PaymentMessages.ORDER_CANCELLED);
+            }
             PaymentRecord auth = authorization.get();
             OperationResult result = gateway.capture(PaymentRecord.idempotencyKey(orderId, Operation.CAPTURE),
                     auth.providerRef(), auth.amountCents(), auth.currency());
@@ -103,12 +110,17 @@ public class PaymentService {
 
     /**
      * Compensation. Voiding twice, or voiding an order without a successful authorization, is a no-op
-     * that still replies (voided=false). A captured payment can't be voided; the saga must refund.
+     * that still replies (voided=false). A captured payment can't be voided: if it was refunded the
+     * void is a no-op too, otherwise it fails and the saga must refund.
      */
     public void voidPayment(EventEnvelope command) {
         UUID orderId = command.orderId();
         PaymentRecord record = payments.find(orderId, Operation.VOID).orElseGet(() -> {
             if (payments.find(orderId, Operation.CAPTURE).filter(PaymentRecord::succeeded).isPresent()) {
+                if (payments.find(orderId, Operation.REFUND).filter(PaymentRecord::succeeded).isPresent()) {
+                    return save(new PaymentRecord(orderId, Operation.VOID, Status.SKIPPED,
+                            null, null, gateway.name(), null, null));
+                }
                 return failed(orderId, Operation.VOID, PaymentMessages.ALREADY_CAPTURED);
             }
             Optional<PaymentRecord> authorization = payments.find(orderId, Operation.AUTHORIZE).filter(PaymentRecord::succeeded);
@@ -125,6 +137,31 @@ public class PaymentService {
             }
             return save(new PaymentRecord(orderId, Operation.VOID, Status.SUCCEEDED,
                     auth.amountCents(), auth.currency(), gateway.name(), auth.providerRef(), null));
+        });
+        reply(command, record);
+    }
+
+    /**
+     * Compensation. Refunds the captured amount in full. Refunding twice, or refunding an order without
+     * a successful capture, is a no-op that still replies (refunded=false); the stored row then blocks a
+     * late capture. A refund the provider refuses is stored as FAILED and replied (the saga needs an
+     * operator); a provider error is thrown and retried.
+     */
+    public void refund(EventEnvelope command) {
+        UUID orderId = command.orderId();
+        PaymentRecord record = payments.find(orderId, Operation.REFUND).orElseGet(() -> {
+            Optional<PaymentRecord> capture = payments.find(orderId, Operation.CAPTURE).filter(PaymentRecord::succeeded);
+            if (capture.isEmpty()) {
+                return save(new PaymentRecord(orderId, Operation.REFUND, Status.SKIPPED,
+                        null, null, gateway.name(), null, null));
+            }
+            PaymentRecord captured = capture.get();
+            OperationResult result = gateway.refund(PaymentRecord.idempotencyKey(orderId, Operation.REFUND),
+                    captured.providerRef(), captured.amountCents(), captured.currency());
+            return save(new PaymentRecord(orderId, Operation.REFUND,
+                    result.succeeded() ? Status.SUCCEEDED : Status.FAILED,
+                    captured.amountCents(), captured.currency(), gateway.name(), captured.providerRef(),
+                    result.failureReason()));
         });
         reply(command, record);
     }
@@ -169,6 +206,17 @@ public class PaymentService {
                 } else {
                     eventType = PaymentMessages.PAYMENT_VOIDED;
                     payload = new PaymentVoided(record.succeeded());
+                }
+            }
+            case REFUND -> {
+                if (record.status() == Status.FAILED) {
+                    eventType = PaymentMessages.PAYMENT_REFUND_FAILED;
+                    payload = new PaymentRefundFailed(record.failureReason());
+                } else {
+                    eventType = PaymentMessages.PAYMENT_REFUNDED;
+                    payload = new PaymentRefunded(record.succeeded(),
+                            record.succeeded() ? record.amountCents() : null,
+                            record.succeeded() ? record.currency() : null);
                 }
             }
             default -> throw new IllegalStateException("No reply defined for " + record.operation());

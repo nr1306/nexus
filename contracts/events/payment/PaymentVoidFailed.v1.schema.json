@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nexus.local/contracts/events/payment/PaymentVoidFailed.v1.schema.json",
   "title": "PaymentVoidFailed payload (event, topic payment.events)",
-  "description": "The authorization could not be voided; the saga must refund instead.",
+  "description": "The authorization could not be voided because it was captured and not refunded; the saga must refund first.",
   "type": "object",
   "required": [
     "reason"

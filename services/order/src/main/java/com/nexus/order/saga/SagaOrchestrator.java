@@ -1,15 +1,19 @@
 package com.nexus.order.saga;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nexus.messaging.envelope.EventEnvelope;
 import com.nexus.messaging.outbox.OutboxWriter;
 import com.nexus.order.config.OrderProperties;
+import com.nexus.order.fraud.FraudCheckRequested;
+import com.nexus.order.fraud.FraudClient;
 import com.nexus.order.messaging.OrderTopics;
 import com.nexus.order.order.OrderDetails;
 import com.nexus.order.order.OrderRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,7 +29,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Orchestrates each order's saga (ADR 0003). Sends one command at a time and waits for its reply;
+ * Orchestrates each order's saga (ADR 0003, 0005, 0006). Sends one command at a time and waits for its reply;
  * on failure or timeout, runs compensations for completed steps in reverse order, one at a time.
  *
  * <p>Every method runs inside the caller's transaction with the saga row locked, so the new saga
@@ -38,6 +42,9 @@ public class SagaOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(SagaOrchestrator.class);
     private static final String AGGREGATE_TYPE = "order";
     private static final int SCHEMA_VERSION = 1;
+    /** Inventory released the hold after its TTL; not a reply to any step (ADR 0006). */
+    static final String RESERVATION_EXPIRED = "ReservationExpired";
+    static final String RESERVATION_EXPIRED_REASON = "RESERVATION_EXPIRED";
 
     private final SagaRepository sagas;
     private final OrderRepository orders;
@@ -45,16 +52,18 @@ public class SagaOrchestrator {
     private final ObjectMapper objectMapper;
     private final SagaMetrics metrics;
     private final OrderProperties properties;
+    private final ApplicationEventPublisher events;
     private final Clock clock;
 
     public SagaOrchestrator(SagaRepository sagas, OrderRepository orders, OutboxWriter outbox, ObjectMapper objectMapper,
-                            SagaMetrics metrics, OrderProperties properties, Clock clock) {
+                            SagaMetrics metrics, OrderProperties properties, ApplicationEventPublisher events, Clock clock) {
         this.sagas = sagas;
         this.orders = orders;
         this.outbox = outbox;
         this.objectMapper = objectMapper;
         this.metrics = metrics;
         this.properties = properties;
+        this.events = events;
         this.clock = clock;
     }
 
@@ -73,7 +82,7 @@ public class SagaOrchestrator {
         send(saga, order);
     }
 
-    /** Applies a reply from Inventory or Payment. Stale, duplicate or unexpected replies are ignored. */
+    /** Applies a reply from Inventory, Payment or Fulfillment. Stale, duplicate or unexpected replies are ignored. */
     public void onReply(EventEnvelope reply) {
         Optional<SagaInstance> found = sagas.lockByOrderId(reply.orderId());
         if (found.isEmpty()) {
@@ -90,7 +99,9 @@ public class SagaOrchestrator {
             log.info("Ignoring {}: saga already {}", reply.eventType(), saga.state());
             return;
         }
-        if (step.isSuccess(reply.eventType())) {
+        if (RESERVATION_EXPIRED.equals(reply.eventType())) {
+            onReservationExpired(saga);
+        } else if (step.isSuccess(reply.eventType())) {
             onStepSucceeded(saga);
         } else if (step.isFailure(reply.eventType())) {
             onStepFailed(saga, reply);
@@ -105,6 +116,11 @@ public class SagaOrchestrator {
      */
     public void onTimeout(SagaInstance saga) {
         SagaStep step = saga.step();
+        if (step.isSynchronous()) {
+            // The runner already retried the call until now; the deadline is the give-up point.
+            startCompensation(saga, "TIMEOUT_" + step.name(), true);
+            return;
+        }
         int maxAttempts = step.isCompensation() ? properties.maxCompensationAttempts() : properties.maxStepAttempts();
         if (saga.stepAttempts() < maxAttempts) {
             SagaInstance retried = saga.retried(deadline());
@@ -118,6 +134,30 @@ public class SagaOrchestrator {
         }
     }
 
+    /** Applies a Fraud verdict to a saga awaiting FRAUD_CHECK (called with the saga row locked). */
+    public void onFraudVerdict(SagaInstance saga, FraudClient.Verdict verdict) {
+        if (verdict.approved()) {
+            onStepSucceeded(saga);
+        } else {
+            log.info("Fraud rejected: {}", verdict.reasons());
+            startCompensation(saga, "FRAUD_REJECTED", false);
+        }
+    }
+
+    /**
+     * The stock hold expired while the saga was still running (it outlived the reservation TTL, e.g.
+     * Order was down). Going on would sell stock that is no longer held, so a saga still in its forward
+     * steps compensates, including the in-flight step. A compensating saga already releases stock;
+     * its ReleaseInventory is a no-op.
+     */
+    private void onReservationExpired(SagaInstance saga) {
+        if (saga.step().isCompensation()) {
+            log.info("Reservation expired while compensating; nothing to do");
+            return;
+        }
+        startCompensation(saga, RESERVATION_EXPIRED_REASON, true);
+    }
+
     private void onStepSucceeded(SagaInstance saga) {
         SagaStep step = saga.step();
         if (step.isCompensation()) {
@@ -126,7 +166,7 @@ public class SagaOrchestrator {
         }
         SagaStep next = step.next();
         if (next != null) {
-            SagaInstance advanced = saga.awaiting(step.stateAfter(), next, List.of(), deadline());
+            SagaInstance advanced = saga.awaiting(next.stateWhileAwaiting(step.stateAfter()), next, List.of(), deadline());
             sagas.update(advanced);
             send(advanced, orderOf(saga));
             log.info("{} succeeded; now {}", step, advanced.state());
@@ -151,7 +191,8 @@ public class SagaOrchestrator {
         // Settle the stock hold; no reply is awaited (InventoryCommitted is informational).
         sendCommand(saga, OrderTopics.INVENTORY_COMMANDS, "CommitInventory", objectMapper.createObjectNode());
         publishOrderEvent(saga, "OrderCompleted", objectMapper.createObjectNode()
-                .put("totalCents", order.totalCents()).put("currency", order.currency()));
+                .put("totalCents", order.totalCents()).put("currency", order.currency())
+                .put("customerId", order.customerId()));
         metrics.completed(Duration.between(saga.createdAt(), clock.instant()));
         log.info("Saga COMPLETED");
     }
@@ -191,7 +232,8 @@ public class SagaOrchestrator {
     private void cancel(SagaInstance saga, boolean compensated) {
         SagaInstance cancelled = saga.terminal(SagaState.CANCELLED);
         sagas.update(cancelled);
-        publishOrderEvent(saga, "OrderCancelled", objectMapper.createObjectNode().put("reason", saga.failureReason()));
+        publishOrderEvent(saga, "OrderCancelled", objectMapper.createObjectNode().put("reason", saga.failureReason())
+                .put("customerId", orderOf(saga).customerId()));
         if (compensated) {
             metrics.compensated(saga.failureReason());
         }
@@ -224,18 +266,29 @@ public class SagaOrchestrator {
 
     private void send(SagaInstance saga, OrderDetails order) {
         SagaStep step = saga.step();
+        if (step.isSynchronous()) {
+            // Runs after this transaction commits (FraudCheckRunner), never inside it.
+            events.publishEvent(new FraudCheckRequested(saga.orderId()));
+            return;
+        }
         ObjectNode payload = objectMapper.createObjectNode();
         switch (step) {
-            case RESERVE_INVENTORY -> payload.set("items", objectMapper.valueToTree(order.items().stream()
-                    .map(i -> objectMapper.createObjectNode().put("sku", i.sku()).put("quantity", i.quantity()))
-                    .toList()));
+            case RESERVE_INVENTORY -> payload.set("items", items(order));
             case AUTHORIZE_PAYMENT -> payload.put("amountCents", order.totalCents())
                     .put("currency", order.currency())
                     .put("paymentMethod", order.paymentMethod());
-            case CAPTURE_PAYMENT -> { }
-            case VOID_PAYMENT, RELEASE_INVENTORY -> payload.put("reason", saga.failureReason());
+            case CREATE_SHIPMENT -> payload.put("customerId", order.customerId()).set("items", items(order));
+            case FRAUD_CHECK, CAPTURE_PAYMENT -> { }
+            case CANCEL_SHIPMENT, REFUND_PAYMENT, VOID_PAYMENT, RELEASE_INVENTORY ->
+                    payload.put("reason", saga.failureReason());
         }
         sendCommand(saga, step.topic(), step.commandType(), payload);
+    }
+
+    private JsonNode items(OrderDetails order) {
+        return objectMapper.valueToTree(order.items().stream()
+                .map(i -> objectMapper.createObjectNode().put("sku", i.sku()).put("quantity", i.quantity()))
+                .toList());
     }
 
     private void sendCommand(SagaInstance saga, String topic, String commandType, ObjectNode payload) {

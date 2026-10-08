@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/contracts/events/fulfillment/ShipmentCreated.v1.schema.json",
+  "title": "ShipmentCreated payload (event, topic fulfillment.events)",
+  "description": "The shipment exists and waits for the order to complete before it is dispatched.",
+  "type": "object",
+  "required": [
+    "shipmentId"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "shipmentId": {
+      "type": "string",
+      "format": "uuid"
+    }
+  }
+}

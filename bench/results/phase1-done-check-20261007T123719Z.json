@@ -1,0 +1,80 @@
+{
+  "scenario" : "phase1-done-check",
+  "description" : "SPEC §12 Phase 1 done criterion: mixed-failure orders through the real services end with 0 stock drift and 0 double charges. Correctness check, not a throughput benchmark.",
+  "timestamp" : "2026-10-07T12:37:19.772802Z",
+  "commitSha" : "3a92c2f4b525b7e0dfceaace615feba0d21f7092",
+  "workingTreeDirty" : false,
+  "environment" : {
+    "kind" : "local Testcontainers (tests/e2e)",
+    "hostOs" : "Mac OS X 26.6.2",
+    "hostArch" : "aarch64",
+    "dockerServerVersion" : "28.4.0",
+    "dockerCpus" : 10,
+    "dockerMemoryBytes" : 8218034176,
+    "imageArchitectures" : {
+      "postgres:16" : "amd64",
+      "apache/kafka:4.1.2" : "arm64",
+      "quay.io/debezium/connect:3.7.0.Final" : "arm64",
+      "eclipse-temurin:21-jre" : "arm64"
+    },
+    "kafkaBrokers" : 1,
+    "topicPartitions" : 12,
+    "replicasPerService" : 1
+  },
+  "parameters" : {
+    "orders" : 1000,
+    "clientConcurrency" : 16,
+    "seed" : 42,
+    "paymentMethodMix" : "80% pm_card_visa, 10% pm_card_chargeDeclined, 5% pm_card_chargeDeclinedInsufficientFunds, 5% pm_mock_captureFails",
+    "scarceSkuStock" : 50,
+    "ordersWithScarceSku" : "20%"
+  },
+  "measurements" : {
+    "ordersPlaced" : 1000,
+    "completed" : 660,
+    "cancelledByReason" : {
+      "CAPTURE_DECLINED" : 49,
+      "CARD_DECLINED" : 91,
+      "INSUFFICIENT_FUNDS" : 35,
+      "OUT_OF_STOCK" : 165
+    },
+    "needsAttention" : 0,
+    "unexpectedOutcomes" : 0,
+    "stockDrift" : 0,
+    "stockBySku" : {
+      "plentifulB" : {
+        "reserved" : 0,
+        "initial" : 10000,
+        "soldByCompletedOrders" : 498,
+        "committed" : 498,
+        "drift" : 0,
+        "available" : 9502
+      },
+      "plentifulA" : {
+        "reserved" : 0,
+        "initial" : 10000,
+        "soldByCompletedOrders" : 1357,
+        "committed" : 1357,
+        "drift" : 0,
+        "available" : 8643
+      },
+      "scarce" : {
+        "reserved" : 0,
+        "initial" : 50,
+        "soldByCompletedOrders" : 43,
+        "committed" : 43,
+        "drift" : 0,
+        "available" : 7
+      }
+    },
+    "capturesTotal" : 660,
+    "doubleCharges" : 0,
+    "capturesOnOrdersNotCompleted" : 0,
+    "completedWithoutCapture" : 0,
+    "danglingAuthorizations" : 0
+  },
+  "runInfo" : {
+    "elapsedSeconds" : 14.496,
+    "note" : "Wall-clock time from first POST until every saga was terminal and all holds settled, on a developer laptop with all components in containers. Not a throughput measurement."
+  }
+}
