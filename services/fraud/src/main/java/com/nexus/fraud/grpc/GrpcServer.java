@@ -5,6 +5,8 @@ import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
+import io.micrometer.core.instrument.binder.grpc.ObservationGrpcServerInterceptor;
+import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.SmartLifecycle;
@@ -26,11 +28,14 @@ public class GrpcServer implements SmartLifecycle {
 
     private final FraudGrpcService fraudGrpcService;
     private final FraudProperties properties;
+    private final ObservationRegistry observationRegistry;
     private final HealthStatusManager health = new HealthStatusManager();
     private volatile Server server;
 
-    public GrpcServer(FraudGrpcService fraudGrpcService, FraudProperties properties) {
+    public GrpcServer(FraudGrpcService fraudGrpcService, FraudProperties properties,
+                      ObservationRegistry observationRegistry) {
         this.fraudGrpcService = fraudGrpcService;
+        this.observationRegistry = observationRegistry;
         this.properties = properties;
     }
 
@@ -41,6 +46,8 @@ public class GrpcServer implements SmartLifecycle {
                     .addService(fraudGrpcService)
                     .addService(health.getHealthService())
                     .addService(ProtoReflectionServiceV1.newInstance())
+                    // Continues the caller's trace from its traceparent metadata (SPEC §9).
+                    .intercept(new ObservationGrpcServerInterceptor(observationRegistry))
                     .build()
                     .start();
         } catch (IOException e) {

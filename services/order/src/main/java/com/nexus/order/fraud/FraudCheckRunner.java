@@ -1,5 +1,6 @@
 package com.nexus.order.fraud;
 
+import com.nexus.observability.TraceContinuation;
 import com.nexus.order.order.OrderDetails;
 import com.nexus.order.order.OrderRepository;
 import com.nexus.order.saga.SagaInstance;
@@ -43,11 +44,12 @@ public class FraudCheckRunner {
     private final ThreadPoolTaskExecutor fraudCheckExecutor;
     private final FraudClientProperties properties;
     private final MeterRegistry meterRegistry;
+    private final TraceContinuation traces;
 
     public FraudCheckRunner(FraudClient fraudClient, SagaRepository sagas, OrderRepository orders,
                             SagaOrchestrator orchestrator, TransactionTemplate transactionTemplate,
                             ThreadPoolTaskExecutor fraudCheckExecutor, FraudClientProperties properties,
-                            MeterRegistry meterRegistry) {
+                            MeterRegistry meterRegistry, TraceContinuation traces) {
         this.fraudClient = fraudClient;
         this.sagas = sagas;
         this.orders = orders;
@@ -56,6 +58,7 @@ public class FraudCheckRunner {
         this.fraudCheckExecutor = fraudCheckExecutor;
         this.properties = properties;
         this.meterRegistry = meterRegistry;
+        this.traces = traces;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -76,8 +79,17 @@ public class FraudCheckRunner {
         return applied;
     }
 
-    /** @return {@code true} if a verdict was obtained and applied */
+    /**
+     * Runs on the executor or the poller, where no message carries a trace: continues the order's trace,
+     * so the gRPC call to Fraud and the next command join it.
+     *
+     * @return {@code true} if a verdict was obtained and applied
+     */
     public boolean check(UUID orderId) {
+        return traces.inTrace(sagas.traceparent(orderId).orElse(null), "fraud check", () -> checkInTrace(orderId));
+    }
+
+    private boolean checkInTrace(UUID orderId) {
         try (var o = MDC.putCloseable("orderId", orderId.toString())) {
             Optional<SagaInstance> awaiting = sagas.findByOrderId(orderId).filter(s -> s.step() == SagaStep.FRAUD_CHECK);
             if (awaiting.isEmpty()) {

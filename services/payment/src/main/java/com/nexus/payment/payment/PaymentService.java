@@ -50,14 +50,16 @@ public class PaymentService {
 
     private final PaymentRepository payments;
     private final PaymentGateway gateway;
+    private final ProviderCalls providerCalls;
     private final OutboxWriter outbox;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
-    public PaymentService(PaymentRepository payments, PaymentGateway gateway, OutboxWriter outbox,
-                          ObjectMapper objectMapper, Clock clock) {
+    public PaymentService(PaymentRepository payments, PaymentGateway gateway, ProviderCalls providerCalls,
+                          OutboxWriter outbox, ObjectMapper objectMapper, Clock clock) {
         this.payments = payments;
         this.gateway = gateway;
+        this.providerCalls = providerCalls;
         this.outbox = outbox;
         this.objectMapper = objectMapper;
         this.clock = clock;
@@ -73,8 +75,9 @@ public class PaymentService {
             if (request == null) {
                 return failed(orderId, Operation.AUTHORIZE, PaymentMessages.INVALID_REQUEST);
             }
-            AuthorizationResult result = gateway.authorize(PaymentRecord.idempotencyKey(orderId, Operation.AUTHORIZE),
-                    request.amountCents(), request.currency(), request.paymentMethod());
+            AuthorizationResult result = providerCalls.authorize(orderId, gateway.name(), () -> gateway.authorize(
+                    PaymentRecord.idempotencyKey(orderId, Operation.AUTHORIZE),
+                    request.amountCents(), request.currency(), request.paymentMethod()));
             return save(new PaymentRecord(orderId, Operation.AUTHORIZE,
                     result.approved() ? Status.SUCCEEDED : Status.FAILED,
                     request.amountCents(), request.currency(), gateway.name(),
@@ -99,8 +102,8 @@ public class PaymentService {
                 return failed(orderId, Operation.CAPTURE, PaymentMessages.ORDER_CANCELLED);
             }
             PaymentRecord auth = authorization.get();
-            OperationResult result = gateway.capture(PaymentRecord.idempotencyKey(orderId, Operation.CAPTURE),
-                    auth.providerRef(), auth.amountCents(), auth.currency());
+            OperationResult result = providerCalls.operation(orderId, Operation.CAPTURE, gateway.name(), () -> gateway.capture(
+                    PaymentRecord.idempotencyKey(orderId, Operation.CAPTURE), auth.providerRef(), auth.amountCents(), auth.currency()));
             return save(new PaymentRecord(orderId, Operation.CAPTURE,
                     result.succeeded() ? Status.SUCCEEDED : Status.FAILED,
                     auth.amountCents(), auth.currency(), gateway.name(), auth.providerRef(), result.failureReason()));
@@ -129,8 +132,8 @@ public class PaymentService {
                         null, null, gateway.name(), null, null));
             }
             PaymentRecord auth = authorization.get();
-            OperationResult result = gateway.voidAuthorization(PaymentRecord.idempotencyKey(orderId, Operation.VOID),
-                    auth.providerRef());
+            OperationResult result = providerCalls.operation(orderId, Operation.VOID, gateway.name(), () -> gateway.voidAuthorization(
+                    PaymentRecord.idempotencyKey(orderId, Operation.VOID), auth.providerRef()));
             if (!result.succeeded()) {
                 // Not a business outcome the saga can act on; roll back and let redelivery retry.
                 throw new IllegalStateException("Provider failed to void authorization: " + result.failureReason());
@@ -156,8 +159,9 @@ public class PaymentService {
                         null, null, gateway.name(), null, null));
             }
             PaymentRecord captured = capture.get();
-            OperationResult result = gateway.refund(PaymentRecord.idempotencyKey(orderId, Operation.REFUND),
-                    captured.providerRef(), captured.amountCents(), captured.currency());
+            OperationResult result = providerCalls.operation(orderId, Operation.REFUND, gateway.name(), () -> gateway.refund(
+                    PaymentRecord.idempotencyKey(orderId, Operation.REFUND),
+                    captured.providerRef(), captured.amountCents(), captured.currency()));
             return save(new PaymentRecord(orderId, Operation.REFUND,
                     result.succeeded() ? Status.SUCCEEDED : Status.FAILED,
                     captured.amountCents(), captured.currency(), gateway.name(), captured.providerRef(),

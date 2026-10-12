@@ -6,6 +6,7 @@ plugins {
 
 dependencies {
     implementation(project(":contracts"))
+    implementation(project(":libs:observability"))
     implementation(libs.grpc.netty.shaded)
     implementation(libs.grpc.services)
 

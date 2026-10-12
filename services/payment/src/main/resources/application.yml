@@ -8,14 +8,23 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/payment_db}
     username: ${DB_USER:nexus}
     password: ${DB_PASSWORD:nexus}
+    hikari:
+      # A provider call holds a connection (ADR 0002) and payment_attempts briefly takes a second (ADR 0010).
+      maximum-pool-size: 20
   flyway:
     locations: classpath:db/migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    listener:
+      observation-enabled: true   # continue the trace from the traceparent header
     consumer:
       group-id: payment-svc
       enable-auto-commit: false
       auto-offset-reset: earliest
+      properties:
+        # A crashed instance's partitions move after 10 s instead of the 45 s default (ADR 0008).
+        session.timeout.ms: 10000
+        heartbeat.interval.ms: 3000
     producer:
       acks: all
       properties:
@@ -23,7 +32,9 @@ spring:
 
 nexus:
   payment:
-    gateway: ${PAYMENT_GATEWAY:mock}
+    gateway: ${PAYMENT_GATEWAY:mock}   # mock | stripe (test mode only, ADR 0010)
+    stripe:
+      api-key: ${STRIPE_API_KEY:}     # sk_test_...; from the environment only, never committed
     mock-latency: PT0S
     topic-partitions: 12
     topic-replicas: 1
@@ -34,6 +45,15 @@ logging:
       console: ecs
 
 management:
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Off until a collector exists (Tempo is Phase 4); traceparent still propagates without export.
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+      export:
+        enabled: ${TRACING_EXPORT_ENABLED:false}
   endpoints:
     web:
       exposure:

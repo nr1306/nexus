@@ -31,4 +31,4 @@ Payment must authorize, capture and void **at most once per order** (CLAUDE.md r
 - A DB connection is held for the duration of each provider call. With the mock this is negligible. With Stripe it bounds throughput per pod by pool size ÷ call latency, which S1 will measure.
 - Correctness depends on the provider honouring idempotency keys. Stripe does, for 24 h, which is far longer than our retry horizon. Any future provider adapter must too.
 - If a void fails at the provider, it is treated as transient: the transaction rolls back and the command is redelivered. Until Phase 2 retry topics and DLQ exist, Spring Kafka's default error handler retries a few times and then skips the record. That is a known gap.
-- `payment_attempts` (SPEC §6) is not built. Each operation's outcome is in `payments`, and attempt-level history can be added with a new migration when the Stripe adapter lands.
+- `payment_attempts` (SPEC §6) is not built. Each operation's outcome is in `payments`, and attempt-level history can be added with a new migration when the Stripe adapter lands. (Done in ADR 0010.)

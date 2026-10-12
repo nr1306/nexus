@@ -8,6 +8,7 @@ import org.junit.jupiter.api.TestMethodOrder;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +39,39 @@ class SagaE2eIT extends E2eSupport {
         await().atMost(Duration.ofSeconds(30)).until(() -> "SHIPPED".equals(shipmentStatus(orderId)));
         await().atMost(Duration.ofSeconds(30)).until(() -> notifications(orderId).size() == 2);
         assertThat(notifications(orderId)).containsExactlyInAnyOrder("ORDER_CONFIRMED", "ORDER_SHIPPED");
+
+        // One order = one trace (SPEC §9): every message any service published for it carries the trace the
+        // POST started, across the outbox, Debezium, Kafka headers, gRPC and Order's fraud poller.
+        Map<String, String> traceIdByMessage = new java.util.TreeMap<>();
+        for (String service : E2eStack.OUTBOX_SERVICES) {
+            E2eStack.db(service).query("SELECT event_type, traceparent FROM outbox WHERE aggregate_id = ?", rs -> {
+                String traceparent = rs.getString(2);
+                traceIdByMessage.put(service + ":" + rs.getString(1),
+                        traceparent == null ? "none" : traceparent.split("-")[1]);
+            }, orderId.toString());
+        }
+        assertThat(traceIdByMessage).containsKeys("order:OrderCreated", "order:CapturePayment", "inventory:InventoryReserved",
+                "payment:PaymentCaptured", "fulfillment:ShipmentShipped");
+        assertThat(Set.copyOf(traceIdByMessage.values())).as("trace ids " + traceIdByMessage).hasSize(1)
+                .doesNotContain("none");
+
+        // SPEC §9 metrics are scrapeable.
+        assertThat(get("order", "/actuator/prometheus")).contains("saga_completed_total", "saga_duration_seconds_bucket");
+        assertThat(get("inventory", "/actuator/prometheus")).contains("stock_cache_hits_total", "stock_cache_misses_total");
+    }
+
+    private static String get(String service, String path) {
+        try {
+            var response = HTTP.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(E2eStack.serviceApi(service) + path))
+                    .timeout(Duration.ofSeconds(10)).GET().build(), java.net.http.HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).as(service + " " + path).isEqualTo(200);
+            return response.body();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
     }
 
     @Test

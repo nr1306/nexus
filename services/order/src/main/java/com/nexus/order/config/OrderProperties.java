@@ -12,6 +12,7 @@ import java.time.Duration;
  * @param sweepBatchSize          overdue sagas handled per sweep
  * @param topicPartitions         partitions for order.events (SPEC.md §5)
  * @param topicReplicas           replication factor for order.events; 1 locally
+ * @param grpcPort                gRPC listen port for the gateway (Fraud uses 9090 locally); 0 picks a free port (tests)
  */
 @ConfigurationProperties("nexus.order")
 public record OrderProperties(
@@ -20,5 +21,6 @@ public record OrderProperties(
         @DefaultValue("5") int maxCompensationAttempts,
         @DefaultValue("100") int sweepBatchSize,
         @DefaultValue("12") int topicPartitions,
-        @DefaultValue("1") short topicReplicas) {
+        @DefaultValue("1") short topicReplicas,
+        @DefaultValue("9091") int grpcPort) {
 }

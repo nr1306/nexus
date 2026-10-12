@@ -6,6 +6,8 @@ import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.micrometer.tagged.TaggedCircuitBreakerMetrics;
 import io.grpc.ManagedChannel;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.micrometer.core.instrument.binder.grpc.ObservationGrpcClientInterceptor;
+import io.micrometer.observation.ObservationRegistry;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,8 +19,11 @@ import java.util.concurrent.TimeUnit;
 class FraudClientConfig {
 
     @Bean(destroyMethod = "")
-    ManagedChannel fraudChannel(FraudClientProperties properties) {
-        return NettyChannelBuilder.forTarget(properties.target()).usePlaintext().build();
+    ManagedChannel fraudChannel(FraudClientProperties properties, ObservationRegistry observationRegistry) {
+        // The observation sends the current trace as traceparent metadata (SPEC §9).
+        return NettyChannelBuilder.forTarget(properties.target()).usePlaintext()
+                .intercept(new ObservationGrpcClientInterceptor(observationRegistry))
+                .build();
     }
 
     @Bean

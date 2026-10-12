@@ -169,7 +169,7 @@ Each service writes its state change **and** its outgoing event in the same Post
 | Inventory | stock (sku, available, reserved), reservations, outbox | Conditional update `available = available - :qty WHERE sku = :sku AND available >= :qty`; 0 rows = rejected, never negative |
 | Payment | payments, payment_attempts, outbox | Unique `(order_id, operation)`: one authorize / capture / refund per order |
 | Fulfillment | shipments, notifications, outbox | Unique `(order_id)` on shipments; unique `(order_id, type)` on notifications |
-| Reconciliation | order_projection, findings, repairs | Unique `(order_id, finding_type)` so a mismatch is reported once |
+| Reconciliation | order_projection, findings, outbox | Unique `(order_id, finding_type)` so a mismatch is reported once |
 | All consumers | processed_events (consumer_group, event_id) | Primary key, inserted in the same transaction as the side effect → duplicates skipped |
 
 **Outbox table (every service):** `id uuid` (= envelope `eventId`), `aggregate_type`, `aggregate_id` (= `orderId`), `event_type`, `topic`, `payload jsonb` (full envelope), `traceparent` (nullable), `created_at`. Debezium's Outbox Event Router routes each row to its `topic` column (e.g. `inventory.commands`, `order.events`), keyed by `aggregate_id`, with `id`, `eventType` and `traceparent` as headers. The table ships in `libs/messaging` (Flyway V1; V1–V9 reserved for the library, services start at V10). Rows older than 24 h are deleted by a cron job. See ADR 0001.
@@ -203,6 +203,8 @@ Delivery is **at-least-once** everywhere; correctness comes from idempotent cons
 5. Sum of reserved stock per SKU = sum of HELD reservations. Flag only.
 
 Each finding stores its detection time, so detection rate and time-to-detect are measured directly.
+
+*As built (ADR 0009):* only orders quiet for a 2 min settle window are checked; held stock is committed for completed orders and released for cancelled ones. #1 and #4 are flag-only for now: a missing capture or shipment can't be safely re-run after completion, and "resume or compensate" needs an `order.commands` topic. #4 flags sagas quiet for 5 min plus `NEEDS_ATTENTION`. #5 is deferred: per-SKU reserved stock never appears in an event, so it needs Inventory to publish a drift event; until then the done checks check it from `inventory_db`.
 
 ---
 
@@ -239,6 +241,8 @@ Develop locally on Docker Compose and kind. Bring up AWS **only for benchmark se
 ## 9. Observability
 
 One order = one trace, from the gateway REST call through every Kafka hop to `OrderCompleted`. OTel Java agent instruments Spring services; Go gateway uses the OTel SDK; Collector → Tempo (traces) + Prometheus (metrics) → Grafana.
+
+*As built (ADR 0011):* Java services use Micrometer Tracing on the OpenTelemetry bridge (`libs/observability`) instead of the agent. The trace rides the outbox `traceparent` column → Debezium header → listener observation, gRPC interceptors carry it to Fraud, and Order stores it on the saga so its sweeper and fraud poller stay in the order's trace. OTLP export is off until the Collector/Tempo exist.
 
 **Custom metrics:**
 
@@ -327,17 +331,17 @@ Each phase ends with something demoable. Phase 1 alone is resume-worthy.
 - [x] Fraud service over gRPC with Resilience4j circuit breaker (ADR 0005)
 - [x] Fulfillment + notifications; step 5 and refund compensation (ADR 0006)
 - [x] Retry topics, DLQs, admin DLQ replay endpoint
-- [ ] Stripe test-mode adapter alongside the mock
-- **Done when:** killing any one service mid-load loses no orders once it restarts
+- [ ] Stripe test-mode adapter alongside the mock (built, ADR 0010; awaiting a run against the real test API, `make stripe-check`)
+- **Done when:** killing any one service mid-load loses no orders once it restarts (`make phase2-check`: each service SIGKILLed in turn under load; "lost" = never accepted, never terminal or `NEEDS_ATTENTION`, plus stock/money/fulfillment invariants and empty DLQs; ADR 0008)
 
 ### Phase 3 — Edge, audit, reconciliation (week 5)
 - [ ] Go gateway: routing, JWT via Keycloak, Redis token bucket, gRPC to Order
 - [ ] OpenSearch sink and S3 archive connectors
-- [ ] Reconciliation service with the 5 invariants and repair commands
-- **Done when:** all S6-injected inconsistencies are detected locally
+- [x] Reconciliation service: invariants 1–4 and repair commands; #5 deferred (ADR 0009)
+- **Done when:** all S6-injected inconsistencies are detected locally (`make s6-check`: fault-free load with 0 findings, then each finding type injected into the owning service's DB + outbox; ADR 0009 §7)
 
 ### Phase 4 — Observability + benchmarks (week 6)
-- [ ] OpenTelemetry tracing across Kafka hops, custom metrics, 5 Grafana dashboards
+- [ ] OpenTelemetry tracing across Kafka hops, custom metrics, 5 Grafana dashboards (propagation done, ADR 0011; export + dashboards need Tempo/Grafana in compose)
 - [ ] Gatling S1–S3, Chaos Mesh S4, seed scripts S5–S6, results JSON writer
 - **Done when:** `make bench SCENARIO=s1` runs end to end on kind and writes results
 

@@ -1,5 +1,6 @@
 package com.nexus.order.saga;
 
+import com.nexus.observability.TraceContinuation;
 import com.nexus.order.config.OrderProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,14 +24,16 @@ public class SagaTimeoutSweeper {
     private final SagaOrchestrator orchestrator;
     private final TransactionTemplate transactionTemplate;
     private final OrderProperties properties;
+    private final TraceContinuation traces;
     private final Clock clock;
 
     public SagaTimeoutSweeper(SagaRepository sagas, SagaOrchestrator orchestrator, TransactionTemplate transactionTemplate,
-                              OrderProperties properties, Clock clock) {
+                              OrderProperties properties, TraceContinuation traces, Clock clock) {
         this.sagas = sagas;
         this.orchestrator = orchestrator;
         this.transactionTemplate = transactionTemplate;
         this.properties = properties;
+        this.traces = traces;
         this.clock = clock;
     }
 
@@ -39,14 +42,16 @@ public class SagaTimeoutSweeper {
         int handled = 0;
         for (UUID orderId : sagas.findOverdue(clock.instant(), properties.sweepBatchSize())) {
             try (var ignored = MDC.putCloseable("orderId", orderId.toString())) {
-                Boolean done = transactionTemplate.execute(status -> sagas.lockIfOverdue(orderId, clock.instant())
-                        .map(saga -> {
-                            try (var sagaId = MDC.putCloseable("sagaId", saga.sagaId().toString())) {
-                                orchestrator.onTimeout(saga);
-                            }
-                            return true;
-                        })
-                        .orElse(false));
+                // In the order's trace, so the commands this sends (re-send or compensation) join it.
+                Boolean done = traces.inTrace(sagas.traceparent(orderId).orElse(null), "saga timeout",
+                        () -> transactionTemplate.execute(status -> sagas.lockIfOverdue(orderId, clock.instant())
+                                .map(saga -> {
+                                    try (var sagaId = MDC.putCloseable("sagaId", saga.sagaId().toString())) {
+                                        orchestrator.onTimeout(saga);
+                                    }
+                                    return true;
+                                })
+                                .orElse(false)));
                 if (Boolean.TRUE.equals(done)) {
                     handled++;
                 }

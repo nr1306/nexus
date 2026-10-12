@@ -6,6 +6,9 @@ plugins {
 
 dependencies {
     implementation(project(":libs:messaging"))
+    implementation(project(":libs:observability"))
+    implementation(libs.resilience4j.circuitbreaker)
+    implementation(libs.resilience4j.micrometer)
 
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-actuator")

@@ -12,10 +12,16 @@ spring:
     locations: classpath:db/migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    listener:
+      observation-enabled: true   # continue the trace from the traceparent header
     consumer:
       group-id: order-saga
       enable-auto-commit: false
       auto-offset-reset: earliest
+      properties:
+        # A crashed instance's partitions move after 10 s instead of the 45 s default (ADR 0008).
+        session.timeout.ms: 10000
+        heartbeat.interval.ms: 3000
     producer:
       acks: all
       properties:
@@ -26,6 +32,7 @@ spring:
 
 nexus:
   order:
+    grpc-port: ${GRPC_PORT:9091}   # OrderService for the gateway (contracts/proto/nexus/order/v1)
     step-timeout: PT30S
     max-step-attempts: 2
     max-compensation-attempts: 5
@@ -33,6 +40,7 @@ nexus:
     timeout-sweeper:
       enabled: true
       interval: PT1S
+      startup-grace: PT10S   # no timeouts until replies are being read (ADR 0008)
     topic-partitions: 12
     topic-replicas: 1
     fraud:
@@ -47,6 +55,15 @@ logging:
       console: ecs
 
 management:
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Off until a collector exists (Tempo is Phase 4); traceparent still propagates without export.
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+      export:
+        enabled: ${TRACING_EXPORT_ENABLED:false}
   endpoints:
     web:
       exposure:

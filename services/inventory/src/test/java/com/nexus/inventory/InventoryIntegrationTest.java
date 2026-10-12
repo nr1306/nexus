@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Shared stack for Inventory integration tests: Postgres, Kafka and Debezium Connect, started once per
+ * Shared stack for Inventory integration tests: Postgres, Kafka, Debezium Connect and Redis, started once per
  * test JVM, with the real outbox connector registered. Tests isolate themselves with fresh SKUs and
  * order ids rather than truncating tables.
  */
@@ -32,11 +32,13 @@ public abstract class InventoryIntegrationTest {
     protected static final PostgreSQLContainer<?> POSTGRES = NexusContainers.postgres(NETWORK, "inventory_db");
     protected static final KafkaContainer KAFKA = NexusContainers.kafka(NETWORK);
     protected static final GenericContainer<?> CONNECT = NexusContainers.connect(NETWORK).dependsOn(KAFKA, POSTGRES);
+    /** Same image as deploy/compose. */
+    protected static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7.4").withExposedPorts(6379);
 
     private static boolean connectorRegistered;
 
     static {
-        Startables.deepStart(POSTGRES, KAFKA, CONNECT).join();
+        Startables.deepStart(POSTGRES, KAFKA, CONNECT, REDIS).join();
     }
 
     @DynamicPropertySource
@@ -45,6 +47,8 @@ public abstract class InventoryIntegrationTest {
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("spring.kafka.bootstrap-servers", KAFKA::getBootstrapServers);
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
     }
 
     @Autowired

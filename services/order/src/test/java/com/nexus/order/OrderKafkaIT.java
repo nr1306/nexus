@@ -1,6 +1,7 @@
 package com.nexus.order;
 
 import com.nexus.messaging.envelope.EventEnvelope;
+import com.nexus.order.messaging.ReplyConsumptionGate;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -9,6 +10,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -24,6 +26,15 @@ import static org.awaitility.Awaitility.await;
  * payment.events / fulfillment.events, playing the role of Inventory, Payment and Fulfillment.
  */
 class OrderKafkaIT extends OrderIntegrationTest {
+
+    @Autowired
+    ReplyConsumptionGate replyGate;
+
+    /** The reply listener's partition assignment opens the gate for saga timeouts (ADR 0008). */
+    @Test
+    void timeoutsAreAllowedOnceReplyTopicsAreAssigned() {
+        await().atMost(Duration.ofMinutes(1)).until(replyGate::timeoutsAllowed);
+    }
 
     @Test
     void sagaCompletesOverKafka() throws Exception {

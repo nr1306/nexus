@@ -6,8 +6,10 @@ plugins {
 
 dependencies {
     implementation(project(":libs:messaging"))
+    implementation(project(":libs:observability"))
     implementation(project(":contracts"))
     implementation(libs.grpc.netty.shaded)
+    implementation(libs.grpc.services)
     implementation(libs.resilience4j.circuitbreaker)
     implementation(libs.resilience4j.micrometer)
 

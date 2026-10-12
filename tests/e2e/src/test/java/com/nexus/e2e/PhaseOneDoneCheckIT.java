@@ -1,19 +1,12 @@
 package com.nexus.e2e;
 
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.testcontainers.DockerClientFactory;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -76,6 +69,20 @@ class PhaseOneDoneCheckIT extends E2eSupport {
                 .until(() -> inventoryDb.queryForObject("SELECT coalesce(sum(reserved), 0) FROM stock WHERE sku IN (?, ?, ?)",
                         Integer.class, skuA, skuB, skuScarce) == 0);
         Duration elapsed = Duration.between(started, Instant.now());
+
+        // Cross-check (ADR 0009): Reconciliation has seen every order quiet past its settle window and checked
+        // it twice more. Measured before stock and money, so any repair it sent is included.
+        JdbcTemplate reconciliationDb = E2eStack.db("reconciliation");
+        Duration quiet = Duration.parse(E2eStack.RECONCILIATION_TIMINGS.get("RECONCILIATION_SETTLE_WINDOW"))
+                .plus(Duration.parse(E2eStack.RECONCILIATION_TIMINGS.get("RECONCILIATION_CHECK_INTERVAL")).multipliedBy(2));
+        await().atMost(Duration.ofMinutes(3)).pollInterval(Duration.ofSeconds(1))
+                .until(() -> reconciliationDb.queryForObject(
+                        "SELECT count(*) FROM order_projection WHERE order_id = ANY (?) AND last_event_at < now() - ?::interval",
+                        Long.class, ids.toArray(new UUID[0]), quiet.toSeconds() + " seconds") == ids.size());
+        Map<String, Long> findings = new TreeMap<>();
+        reconciliationDb.queryForList("SELECT finding_type FROM findings WHERE order_id = ANY (?)", String.class,
+                (Object) ids.toArray(new UUID[0])).forEach(type -> findings.merge(type, 1L, Long::sum));
+        long findingsTotal = findings.values().stream().mapToLong(Long::longValue).sum();
 
         // --- Outcomes, from order_db ---
         Map<UUID, String> state = new HashMap<>();
@@ -163,6 +170,8 @@ class PhaseOneDoneCheckIT extends E2eSupport {
         measurements.put("capturesOnOrdersNotCompleted", capturesOnNotCompleted);
         measurements.put("completedWithoutCapture", completedWithoutCapture);
         measurements.put("danglingAuthorizations", danglingAuthorizations);
+        measurements.set("reconciliationFindingsByType", JSON.valueToTree(findings));
+        measurements.put("reconciliationFindings", findingsTotal);
         writeResults(orders, scarce, measurements, elapsed);
 
         assertThat(placed).hasSize(orders);
@@ -174,6 +183,7 @@ class PhaseOneDoneCheckIT extends E2eSupport {
         assertThat(completedWithoutCapture).as("completed orders without a capture").isZero();
         assertThat(danglingAuthorizations).as("cancelled orders still holding an authorization").isZero();
         assertThat(capturesTotal).isEqualTo(completed);
+        assertThat(findingsTotal).as("Reconciliation findings " + findings).isZero();
     }
 
     /** Deterministic mix: 80% visa, 10% declined, 5% insufficient funds, 5% capture fails; 20% include the scarce SKU. */
@@ -237,38 +247,10 @@ class PhaseOneDoneCheckIT extends E2eSupport {
     }
 
     private static void writeResults(int orders, int scarceStock, ObjectNode measurements, Duration elapsed) throws IOException {
-        String dir = System.getProperty("nexus.resultsDir");
-        if (dir == null) {
-            return;
-        }
         Instant now = Instant.now();
-        ObjectNode result = JSON.createObjectNode();
-        result.put("scenario", "phase1-done-check");
-        result.put("description", "SPEC §12 Phase 1 done criterion: mixed-failure orders through the real services "
-                + "end with 0 stock drift and 0 double charges. Correctness check, not a throughput benchmark.");
-        result.put("timestamp", now.toString());
-        Path repo = Path.of(System.getProperty("nexus.repoRoot"));
-        result.put("commitSha", git(repo, "rev-parse", "HEAD"));
-        result.put("workingTreeDirty", !git(repo, "status", "--porcelain").isBlank());
-
-        ObjectNode env = result.putObject("environment");
-        env.put("kind", "local Testcontainers (tests/e2e)");
-        env.put("hostOs", System.getProperty("os.name") + " " + System.getProperty("os.version"));
-        env.put("hostArch", System.getProperty("os.arch"));
-        var docker = DockerClientFactory.instance().client();
-        var info = docker.infoCmd().exec();
-        env.put("dockerServerVersion", info.getServerVersion());
-        env.put("dockerCpus", info.getNCPU());
-        env.put("dockerMemoryBytes", info.getMemTotal());
-        ObjectNode images = env.putObject("imageArchitectures");
-        for (String image : List.of(com.nexus.messaging.testing.NexusContainers.POSTGRES_IMAGE,
-                com.nexus.messaging.testing.NexusContainers.KAFKA_IMAGE,
-                com.nexus.messaging.testing.NexusContainers.CONNECT_IMAGE, E2eStack.JRE_IMAGE)) {
-            images.put(image, docker.inspectImageCmd(image).exec().getArch());
-        }
-        env.put("kafkaBrokers", 1);
-        env.put("topicPartitions", 12);
-        env.put("replicasPerService", 1);
+        ObjectNode result = DoneCheckResults.header(JSON, "phase1-done-check",
+                "SPEC §12 Phase 1 done criterion: mixed-failure orders through the real services "
+                        + "end with 0 stock drift and 0 double charges. Correctness check, not a throughput benchmark.", now);
 
         ObjectNode params = result.putObject("parameters");
         params.put("orders", orders);
@@ -283,28 +265,6 @@ class PhaseOneDoneCheckIT extends E2eSupport {
         run.put("elapsedSeconds", elapsed.toMillis() / 1000.0);
         run.put("note", "Wall-clock time from first POST until every saga was terminal and all holds settled, "
                 + "on a developer laptop with all components in containers. Not a throughput measurement.");
-
-        Path out = Path.of(dir);
-        Files.createDirectories(out);
-        String stamp = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC).format(now);
-        Path file = out.resolve("phase1-done-check-" + stamp + ".json");
-        Files.writeString(file, JSON.copy().enable(SerializationFeature.INDENT_OUTPUT).writeValueAsString(result) + "\n",
-                StandardCharsets.UTF_8);
-        System.out.println("Wrote " + file);
-    }
-
-    private static String git(Path repo, String... args) {
-        List<String> command = new ArrayList<>(List.of("git", "-C", repo.toString()));
-        command.addAll(List.of(args));
-        try {
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            return process.waitFor() == 0 ? output : "unknown";
-        } catch (IOException e) {
-            return "unknown";
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return "unknown";
-        }
+        DoneCheckResults.write(JSON, result, now);
     }
 }

@@ -11,6 +11,7 @@ import com.nexus.order.fraud.FraudClient;
 import com.nexus.order.messaging.OrderTopics;
 import com.nexus.order.order.OrderDetails;
 import com.nexus.order.order.OrderRepository;
+import com.nexus.observability.TraceContinuation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -53,10 +54,12 @@ public class SagaOrchestrator {
     private final SagaMetrics metrics;
     private final OrderProperties properties;
     private final ApplicationEventPublisher events;
+    private final TraceContinuation traces;
     private final Clock clock;
 
     public SagaOrchestrator(SagaRepository sagas, OrderRepository orders, OutboxWriter outbox, ObjectMapper objectMapper,
-                            SagaMetrics metrics, OrderProperties properties, ApplicationEventPublisher events, Clock clock) {
+                            SagaMetrics metrics, OrderProperties properties, ApplicationEventPublisher events,
+                            TraceContinuation traces, Clock clock) {
         this.sagas = sagas;
         this.orders = orders;
         this.outbox = outbox;
@@ -64,6 +67,7 @@ public class SagaOrchestrator {
         this.metrics = metrics;
         this.properties = properties;
         this.events = events;
+        this.traces = traces;
         this.clock = clock;
     }
 
@@ -73,7 +77,7 @@ public class SagaOrchestrator {
         SagaStep first = SagaStep.FORWARD.getFirst();
         SagaInstance saga = new SagaInstance(sagaId, order.orderId(), SagaState.PENDING, first,
                 now.plus(properties.stepTimeout()), 1, List.of(), null, now);
-        sagas.insert(saga);
+        sagas.insert(saga, traces.current().orElse(null));
 
         ObjectNode created = objectMapper.createObjectNode().put("customerId", order.customerId());
         created.set("items", objectMapper.valueToTree(order.items()));

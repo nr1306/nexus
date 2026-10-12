@@ -43,12 +43,13 @@ public class SagaRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public void insert(SagaInstance saga) {
+    /** @param traceparent the trace the order started in, or null */
+    public void insert(SagaInstance saga, String traceparent) {
         jdbcTemplate.update(con -> {
             var ps = con.prepareStatement("""
                     INSERT INTO saga_instances (saga_id, order_id, state, step, step_deadline, step_attempts,
-                                                compensations, failure_reason, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                compensations, failure_reason, created_at, traceparent)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """);
             ps.setObject(1, saga.sagaId());
             ps.setObject(2, saga.orderId());
@@ -59,8 +60,15 @@ public class SagaRepository {
             ps.setArray(7, steps(con, saga.compensations()));
             ps.setString(8, saga.failureReason());
             ps.setTimestamp(9, timestamp(saga.createdAt()));
+            ps.setString(10, traceparent);
             return ps;
         });
+    }
+
+    /** The traceparent stored when the saga started; empty if there was none. */
+    public java.util.Optional<String> traceparent(UUID orderId) {
+        return jdbcTemplate.query("SELECT traceparent FROM saga_instances WHERE order_id = ?",
+                (rs, i) -> rs.getString(1), orderId).stream().filter(java.util.Objects::nonNull).findFirst();
     }
 
     public void update(SagaInstance saga) {

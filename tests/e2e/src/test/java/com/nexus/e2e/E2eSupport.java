@@ -23,7 +23,7 @@ abstract class E2eSupport {
     static final Set<String> TERMINAL = Set.of("COMPLETED", "CANCELLED", "NEEDS_ATTENTION");
 
     protected static final ObjectMapper JSON = new ObjectMapper();
-    private static final HttpClient HTTP = HttpClient.newHttpClient();
+    protected static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
     @BeforeAll
     static void startStack() {
@@ -49,6 +49,7 @@ abstract class E2eSupport {
             HttpResponse<String> response = HTTP.send(HttpRequest.newBuilder(URI.create(E2eStack.orderApi() + "/orders"))
                             .header("Content-Type", "application/json")
                             .header("Idempotency-Key", idempotencyKey)
+                            .timeout(Duration.ofSeconds(15))
                             .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                             .build(),
                     HttpResponse.BodyHandlers.ofString());

@@ -4,3 +4,4 @@ CREATE DATABASE inventory_db;
 CREATE DATABASE payment_db;
 CREATE DATABASE fraud_db;
 CREATE DATABASE fulfillment_db;
+CREATE DATABASE reconciliation_db;

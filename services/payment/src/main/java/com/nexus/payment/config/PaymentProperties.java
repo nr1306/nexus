@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 import java.time.Duration;
 
 /**
- * @param gateway         payment provider adapter: {@code mock} (Stripe test mode is added in Phase 2)
+ * @param gateway         payment provider adapter: {@code mock} or {@code stripe} (test mode only, ADR 0010)
  * @param mockLatency     artificial delay per mock provider call, to make load tests realistic
  * @param topicPartitions partitions for payment topics (SPEC.md §5)
  * @param topicReplicas   replication factor for payment topics; 1 locally

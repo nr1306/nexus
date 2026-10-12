@@ -37,7 +37,8 @@ import java.util.UUID;
  */
 @SpringBootTest(properties = {
         "nexus.order.timeout-sweeper.enabled=false",
-        "nexus.order.fraud.auto-run=false"})
+        "nexus.order.fraud.auto-run=false",
+        "nexus.order.grpc-port=0"})
 @AutoConfigureMockMvc
 @Import(OrderIntegrationTest.StubFraudConfig.class)
 public abstract class OrderIntegrationTest {

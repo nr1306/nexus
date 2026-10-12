@@ -12,10 +12,16 @@ spring:
     locations: classpath:db/migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    listener:
+      observation-enabled: true   # continue the trace from the traceparent header
     consumer:
       group-id: fulfillment-svc
       enable-auto-commit: false
       auto-offset-reset: earliest
+      properties:
+        # A crashed instance's partitions move after 10 s instead of the 45 s default (ADR 0008).
+        session.timeout.ms: 10000
+        heartbeat.interval.ms: 3000
     producer:
       acks: all
       properties:
@@ -32,6 +38,15 @@ logging:
       console: ecs
 
 management:
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      # Off until a collector exists (Tempo is Phase 4); traceparent still propagates without export.
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+      export:
+        enabled: ${TRACING_EXPORT_ENABLED:false}
   endpoints:
     web:
       exposure:

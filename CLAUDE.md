@@ -61,15 +61,15 @@ The table covers business failures. On a **timeout** the saga also undoes the in
 ```
 contracts/            Protobuf (gRPC, compiled by the `:contracts` Gradle module) + JSON Schemas for events — source of truth for messages
 libs/messaging/       Outbox writer, idempotent-consumer base class, retry/DLQ config
-libs/observability/   Shared metrics + tracing setup
+libs/observability/   Tracing (Micrometer + OpenTelemetry bridge): traceparent on outbox rows, Kafka/gRPC propagation, TraceContinuation
 services/<name>/      One module per service (gateway is a Go module)
-deploy/compose/       Local stack: Kafka, Postgres, Redis, Debezium, Keycloak, OpenSearch, Grafana
+deploy/compose/       Local stack: Kafka, Postgres, Redis, Debezium Connect (Keycloak, OpenSearch, Grafana planned)
 deploy/helm/          One chart per service + umbrella chart
 deploy/connect/       Debezium, OpenSearch sink, S3 sink connector configs
 infra/terraform/      vpc, eks, msk, rds, redis, opensearch, ecr, s3, iam, budget
 bench/                gatling/, chaos/, scenarios/, results/
 SPEC.md               Full project spec
-docs/adr/             Architecture decision records (0001 outbox, 0002 payment idempotency, 0003 saga, 0004 retry/DLQ, 0005 fraud, 0006 fulfillment/refund, 0007 reservation expiry)
+docs/adr/             Architecture decision records (0001 outbox, 0002 payment idempotency, 0003 saga, 0004 retry/DLQ, 0005 fraud, 0006 fulfillment/refund, 0007 reservation expiry, 0008 crash recovery, 0009 reconciliation, 0010 Stripe + payment attempts, 0011 trace propagation)
 Makefile
 ```
 
@@ -84,6 +84,9 @@ make build                      # compile everything, skip tests
 make test                       # all unit + integration tests (Java; Go added in Phase 3)
 make e2e                        # end-to-end saga tests: every service as a container + Debezium (slow)
 make phase1-check               # 1,000-order done check; writes bench/results/phase1-done-check-*.json
+make phase2-check               # kill each service mid-load, 0 orders lost; writes bench/results/phase2-done-check-*.json
+make s6-check                   # S6 reconciliation: 0 false positives, every injected inconsistency detected; writes bench/results/s6-reconciliation-*.json
+make stripe-check               # Stripe adapter against the real test-mode API; needs STRIPE_API_KEY=sk_test_... in the environment
 ./gradlew :services:order:test  # one Java module
 ./gradlew :services:order:bootRun   # run one service against the local stack
 ```
@@ -97,16 +100,18 @@ If a command does not exist yet, add it to the Makefile rather than documenting 
 - Gradle wrapper 8.14.5 runs on the default JDK 17; the build uses a **Java 21 toolchain** that Gradle downloads automatically (foojay). Don't point `JAVA_HOME` at Homebrew's JDK 27 (Gradle 8.14 can't run on it).
 - Spring Boot **3.5.x**; versions live in `gradle/libs.versions.toml`.
 - gRPC: grpc-java 1.84 with protoc/protobuf **3.25.9** (grpc-java's tested line; keep them equal). Fraud rejects `pm_card_radarBlock` and customer `blocked-customer` (seeded), totals > 500,000 cents, and a customer's 6th order within 10 min, so test/load data needs many customers.
-- Mock payment methods (`MockPaymentGateway`): `pm_card_visa` approves, `pm_card_chargeDeclined` / `pm_card_chargeDeclinedInsufficientFunds` decline, `pm_mock_captureFails` authorizes but fails capture, `pm_mock_refundFails` captures but refuses the refund.
+- Mock payment methods (`MockPaymentGateway`): `pm_card_visa` approves, `pm_card_chargeDeclined` / `pm_card_chargeDeclinedInsufficientFunds` decline, `pm_mock_captureFails` authorizes but fails capture, `pm_mock_refundFails` captures but refuses the refund. `PAYMENT_GATEWAY=stripe` + `STRIPE_API_KEY=sk_test_…` switches to Stripe test mode (ADR 0010; live keys are refused, `pm_mock_*` don't exist there). Every provider call is logged in `payment_attempts`.
 - Fulfillment refuses SKUs in its `restricted_skus` table. `SKU-HAZMAT-01` is seeded there and stocked in Inventory, so ordering it exercises fulfillment failure → refund. Shipments are dispatched (and the customer notified) only on `OrderCompleted`; notifications are log lines (`LoggingNotificationSender`).
 - Place an order locally (after `make up`, starting the services, `make connectors`):
   `curl -X POST localhost:8101/orders -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' -d '{"customerId":"c1","currency":"USD","paymentMethod":"pm_card_visa","items":[{"sku":"SKU-0001","quantity":2,"unitPriceCents":1999}]}'`, then `GET localhost:8101/orders/<id>`. The REST API is on Order directly until the Go gateway (Phase 3) fronts it via gRPC; both call `OrderService`.
-- Ports: order **8101**, inventory **8102**, payment **8103**, fraud **8104** (HTTP) / **9090** (gRPC), fulfillment **8105**; Kafka 9092, Postgres 5432 (`order_db`, `inventory_db`, `payment_db`, `fraud_db`, `fulfillment_db`; a Postgres volume created before a service existed lacks its database: run `make clean` once, or `CREATE DATABASE fraud_db` / `fulfillment_db`), Redis 6379, Kafka Connect 8083.
+- Inventory serves `GET /stock/{sku}` (display only) through a Redis cache-aside (5 s TTL, evicted after each reserve/release commits; `STOCK_CACHE_ENABLED=false` turns it off). Redis is optional: errors fall back to Postgres.
+- Ports: order **8101** (HTTP) / **9091** (gRPC, `nexus.order.v1.OrderService` for the gateway), inventory **8102**, payment **8103**, fraud **8104** (HTTP) / **9090** (gRPC), fulfillment **8105**, reconciliation **8106**; Kafka 9092, Postgres 5432 (`order_db`, `inventory_db`, `payment_db`, `fraud_db`, `fulfillment_db`, `reconciliation_db`; a Postgres volume created before a service existed lacks its database: run `make clean` once, or `CREATE DATABASE reconciliation_db` etc.), Redis 6379, Kafka Connect 8083.
 - Container images used by tests must match `deploy/compose/docker-compose.yml` (`postgres:16`, `apache/kafka:4.1.2`, `quay.io/debezium/connect:3.7.0.Final`).
 - Testcontainers is the Boot-managed 1.21.x. Don't add `debezium-testing-testcontainers` (it needs Testcontainers 2.x); run the Connect image as a `GenericContainer` instead.
 - End-to-end tests live in `tests/e2e` and only run with `-Pe2e` (see Makefile). They run each service's bootJar in an `eclipse-temurin:21-jre` container, because services can't share one JVM (same `application.yml` path and `V10__` migrations). Service logs: `tests/e2e/build/e2e-logs/`.
 - Integration tests: depend on `testImplementation(testFixtures(project(":libs:messaging")))` and use `NexusContainers` + `OutboxConnectors`. Follow `InventoryIntegrationTest`: one singleton Postgres/Kafka/Connect stack per test JVM, connector registered once, tests isolated by fresh SKUs/order ids instead of truncating.
-- Structured logging: services use `logging.structured.format.console: ecs` and put `orderId`, `sagaId`, `eventId`, `eventType` in the MDC around message handling (see `InventoryCommandHandler`). Every Kafka-consuming service has this.
+- Structured logging: services use `logging.structured.format.console: ecs` and put `orderId`, `sagaId`, `eventId`, `eventType` in the MDC around message handling (see `InventoryCommandHandler`). Every Kafka-consuming service has this. `traceId`/`spanId` come from tracing (ADR 0011).
+- Tracing: every Java service depends on `libs/observability`. One order is one trace: outbox rows carry `traceparent`, listeners continue it (`spring.kafka.listener.observation-enabled`), gRPC uses Micrometer's interceptors, and work without a message (sweepers, pollers) uses `TraceContinuation` with the trace stored on the saga. OTLP export is off (`TRACING_EXPORT_ENABLED`) until a collector is added. A new service or scheduled job acting on an order must keep this. Metrics: `libs/observability` brings the Prometheus registry, so every service serves `/actuator/prometheus` (SPEC §9 metrics).
 - To stop a service you started, kill it by PID or by its port (`lsof -ti tcp:8101 | xargs kill`). **Never** use broad `pkill -f` patterns: on macOS they match every app under `/Applications`.
 
 ## Non-negotiable rules (correctness)
@@ -200,12 +205,17 @@ Benchmark numbers will appear on a résumé. Treat them as evidence.
 - **Payment provider calls hold a DB connection** for the call's duration (ADR 0002). Fine for the mock; measure with Stripe latency in S1.
 - **Retry chain (≈36 s) > saga step timeout (30 s):** a command stuck in retries gets re-sent once by Order. Harmless (idempotent receivers) but visible.
 - **Retry topics reorder messages per order.** Handled where it matters: Inventory's `released_orders` marker, Payment's `VOID`/`REFUND` rows and Fulfillment's `CANCELLED` shipment marker reject late reserves/authorizes/captures/creates. New consumers must think about the same.
+- **Fraud outage can outlast the 30 s fraud deadline:** a failed half-open probe (gRPC reconnect backoff right after Fraud restarts) re-opens Order's breaker for 10 s, so an outage shorter than the deadline can still cancel a few in-flight orders with `TIMEOUT_FRAUD_CHECK` (seen intermittently in local Phase 2 trials; clean compensation, allowed by the check). Options: shorter `open-state-wait`, or a channel reset on restart.
+- **`payment_attempts` takes a second connection per provider call** (own transaction, ADR 0010); Payment's pool is 20. The table has no retention job yet.
 - **Fraud poller runs on every Order pod:** duplicate Evaluate calls for one order are possible with replicas; harmless (Fraud is idempotent per order, verdict applied only while awaited).
 - **`/admin/dlq` is unauthenticated:** keep it off the gateway (Phase 3) and behind network policy (Phase 5).
 - **Saga state CHECK:** a new saga state needs a **new** migration for the `saga_instances.state` CHECK (as V11 did); never edit an applied one.
 - **Commit after an expired hold can oversell:** only if a saga outlives the 10 min TTL and the stock was sold meanwhile; reported as `InventoryCommitted.shortfall` + `inventory_commit_shortfall_total` for Reconciliation (Phase 3) (ADR 0007).
 - **Notifications are sent inside the consumer transaction:** a rollback after a real send would resend. The log sender makes this moot; a real channel must use the stable notification id as its idempotency key (ADR 0006).
 - **Fulfillment failures happen after capture**, so the customer sees a charge and a refund (SPEC step order). Revisit if the Stripe adapter makes this visible.
+- **Saga timeouts wait for replies after an Order restart:** `ReplyConsumptionGate` holds the timeout sweeper until the reply listener is assigned partitions + `startup-grace` (10 s). Consumers use a 10 s `session.timeout.ms` so a crashed instance's partitions move quickly (ADR 0008). Static membership is the Phase 5 option.
+- **Reconciliation only sees what was published** (ADR 0009): silent DB corruption with no event is out of reach. Invariant 1 (completed without capture/shipment) and 4 (stuck saga, `NEEDS_ATTENTION`) are flag-only until Order has an `order.commands` topic; invariant 5 (per-SKU reserved = held) is deferred until Inventory publishes a drift event. `/admin/findings` is unauthenticated, like `/admin/dlq`.
+- **The e2e stack runs Reconciliation with short timings** (`E2eStack.RECONCILIATION_TIMINGS`: 5 s check, 30 s settle, 90 s stuck, 30 s repair retry), so its repairs can act during other e2e tests too. The settle window must exceed how late a follow-up command can be (a 10 s window flagged orders whose `CommitInventory` was delayed by a killed Inventory); the Phase 2 check asserts 0 findings.
 - **Idempotency-Key is global**, not scoped per customer/API key. Scope it when the gateway (Phase 3) passes the caller identity.
 
 ## Build phases (current status: Phase 1 done — `bench/results/phase1-done-check-20261007T123719Z.json` @ 3a92c2f; Phase 2 in progress)
@@ -233,12 +243,26 @@ Update the status line above when a phase's done criteria are met (see `SPEC.md`
 - [x] Retry topics (1 s/5 s/30 s) + per-group DLQ + DLQ admin/replay; Inventory release marker (ADR 0004)
 - [x] Fraud service over gRPC + Resilience4j circuit breaker; saga step 3 (ADR 0005)
 - [x] Fulfillment + notifications; refund compensation; saga step 5 (ADR 0006)
-- [ ] Stripe test-mode adapter
-- [ ] Done check: killing any one service mid-load loses no orders once it restarts
+- [ ] Stripe test-mode adapter: built + stub-server tests, circuit breaker, test-key guard (ADR 0010); tick after `make stripe-check` passes with a real test key
+- [x] `payment_attempts`: one row per provider call, kept on rollback (ADR 0010)
+- [x] Redis stock read cache: `GET /stock/{sku}`, cache-aside, evicted after commit, metrics `stock_cache_*`
+- [ ] Done check: killing any one service mid-load loses no orders once it restarts (`make phase2-check`; consumer handover + timeout gate, ADR 0008; needs a run from a clean commit)
 
 - [x] Reservation expiry sweeper (SPEC §7): overdue holds → `EXPIRED`, stock returned, `ReservationExpired` makes a still-running saga compensate; a commit after expiry re-takes stock or reports a shortfall (ADR 0007)
 
-**Carried into Phase 2:** Redis stock read cache, `payment_attempts`.
+**Phase 3 progress:**
+- [x] Reconciliation service: event projection (facts), invariants 1–4, `RefundPayment` / `CommitInventory` / `ReleaseInventory` repairs via the outbox, `/admin/findings` (ADR 0009)
+- [x] Order gRPC API for the gateway (`contracts/proto/nexus/order/v1/order.proto`: PlaceOrder, GetOrder; same `OrderService` and Idempotency-Key as REST)
+- [ ] Done check, S6 (`make s6-check`): fault-free load → 0 findings; injected inconsistencies per type → detected, repairable ones fixed (passes locally; needs a run from a clean commit for `bench/results`)
+- [ ] Go gateway: routing, JWT via Keycloak, Redis token bucket, gRPC to Order (needs Go installed)
+- [ ] OpenSearch sink and S3 archive connectors (needs OpenSearch/MinIO in compose; ask first)
+- Follow-ups: `order.commands` so stuck sagas can be resumed or compensated; invariant 5 via an Inventory drift event
+
+**Phase 4 progress (started early):**
+- [x] Trace propagation: one order = one trace across outbox → Debezium → Kafka, gRPC and Order's sweepers (ADR 0011; verified in `SagaE2eIT`)
+- [x] `/actuator/prometheus` on every service (the registry was missing; SPEC §9 metrics are now scrapeable)
+- [ ] Trace export + Tempo/Grafana/Prometheus in compose (needs approval: new infrastructure)
+
 
 ## When unsure
 

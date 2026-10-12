@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+// Gateway -> Order (SPEC.md §3). The same operations as Order's REST API (POST /orders, GET /orders/{id});
+// both call OrderService.
+//
+// Errors (gRPC status):
+//   INVALID_ARGUMENT     the request is invalid (missing idempotency key, bad currency, empty items, ...)
+//   FAILED_PRECONDITION  the idempotency key was already used with a different request
+//   NOT_FOUND            GetOrder: no such order
+package nexus.order.v1;
+
+option java_multiple_files = true;
+option java_package = "com.nexus.contracts.order.v1";
+option go_package = "github.com/nr1306/nexus/services/gateway/gen/nexus/order/v1;orderv1";
+
+service OrderService {
+  // Accepts an order and starts its saga. Idempotent per idempotency_key: repeating the same key with the
+  // same request returns the original order (replayed = true), so callers may retry freely.
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse);
+  rpc GetOrder(GetOrderRequest) returns (Order);
+}
+
+message PlaceOrderRequest {
+  string idempotency_key = 1;  // the client's Idempotency-Key header, at most 255 characters
+  string customer_id = 2;
+  string currency = 3;         // ISO 4217
+  string payment_method = 4;   // provider token, e.g. pm_card_visa
+  repeated LineItem items = 5;
+}
+
+message LineItem {
+  string sku = 1;
+  int32 quantity = 2;
+  int64 unit_price_cents = 3;  // simulated catalog: prices come from the client
+}
+
+message PlaceOrderResponse {
+  Order order = 1;
+  bool replayed = 2;           // true if the key was seen before and the original order is returned
+}
+
+message GetOrderRequest {
+  string order_id = 1;         // UUID
+}
+
+message Order {
+  string order_id = 1;
+  string saga_id = 2;
+  string status = 3;           // saga state, e.g. PENDING, COMPLETED, CANCELLED
+  string step = 4;             // step awaiting a reply; empty when terminal
+  string failure_reason = 5;   // empty unless cancelled or needs attention
+  string customer_id = 6;
+  repeated LineItem items = 7;
+  int64 total_cents = 8;
+  string currency = 9;
+  string created_at = 10;      // UTC ISO-8601
+  string updated_at = 11;      // UTC ISO-8601
+}
